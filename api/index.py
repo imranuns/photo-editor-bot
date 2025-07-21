@@ -45,22 +45,25 @@ def get_image_from_telegram(file_id):
         print(f"Error downloading image: {e}")
         return None
 
-def apply_artistic_filter(image):
-    """Applies a custom artistic filter similar to the user's example."""
+def apply_pro_filter(image):
+    """Applies a professional, cinematic filter to the image."""
     try:
-        # 1. Convert to grayscale to desaturate
-        grayscale_image = ImageOps.grayscale(image)
+        # 1. Slightly desaturate the image to give it a moody feel
+        color_enhancer = ImageEnhance.Color(image)
+        desaturated_image = color_enhancer.enhance(0.4) # Reduce color by 60%
         
-        # 2. Re-colorize with a cool tone (mapping black to dark blue, white to light gray)
-        colorized_image = ImageOps.colorize(grayscale_image, black="#222B3D", white="#DFE2E5")
-        
-        # 3. Increase contrast to make details pop
-        contrast_enhancer = ImageEnhance.Contrast(colorized_image)
-        final_image = contrast_enhancer.enhance(1.4)
+        # 2. Increase contrast to make details stand out
+        contrast_enhancer = ImageEnhance.Contrast(desaturated_image)
+        contrasted_image = contrast_enhancer.enhance(1.3) # Increase contrast by 30%
+
+        # 3. Add a cool (blueish) tint to the shadows
+        # To do this, we create a blue layer and blend it
+        blue_layer = Image.new('RGB', contrasted_image.size, '#001122')
+        final_image = Image.blend(contrasted_image, blue_layer, alpha=0.15) # Blend 15% of the blue layer
         
         return final_image
     except Exception as e:
-        print(f"Error applying artistic filter: {e}")
+        print(f"Error applying pro filter: {e}")
         return image # Return original image on failure
 
 # --- Webhook Handler ---
@@ -79,22 +82,21 @@ def webhook():
             send_telegram_message(chat_id, "Sorry, your photo session has expired. Please send the photo again.")
             return 'ok'
 
-        if data == 'artistic':
-            send_telegram_message(chat_id, "🎨 Applying the *Artistic* filter...")
+        if data == 'pro_filter':
+            send_telegram_message(chat_id, "🎨 Applying the *Pro Filter*... This might take a moment.")
 
             original_image = get_image_from_telegram(file_id)
             if original_image:
-                edited_image = apply_artistic_filter(original_image)
+                edited_image = apply_pro_filter(original_image)
                 
                 output_buffer = io.BytesIO()
-                edited_image.save(output_buffer, format='JPEG')
+                edited_image.save(output_buffer, format='JPEG', quality=90)
                 output_buffer.seek(0)
                 
-                send_processed_photo(chat_id, output_buffer.getvalue(), "✅ Here is your artistically edited photo!")
+                send_processed_photo(chat_id, output_buffer.getvalue(), "✅ Here is your professionally edited photo!")
             else:
                 send_telegram_message(chat_id, "❌ Could not process the image.")
         
-        # Clear the session
         user_photo_session.pop(chat_id, None)
         return 'ok'
 
@@ -102,13 +104,11 @@ def webhook():
         message = update['message']
         chat_id = message['chat']['id']
         
-        # Handle /start command
         if 'text' in message and message['text'] == '/start':
-            welcome_message = "👋 Welcome to the Photo Editor Bot!\n\nPlease send me a photo to get started."
+            welcome_message = "👋 Welcome to the Pro Photo Editor Bot!\n\nPlease send me a photo to get started."
             send_telegram_message(chat_id, welcome_message)
             return 'ok'
 
-        # Handle incoming photo
         if 'photo' in message:
             file_id = message['photo'][-1]['file_id']
             user_photo_session[chat_id] = file_id
@@ -116,18 +116,17 @@ def webhook():
             keyboard = {
                 "inline_keyboard": [
                     [
-                        {"text": "✨ Apply Artistic Filter", "callback_data": "artistic"}
+                        {"text": "✨ Apply Pro Filter", "callback_data": "pro_filter"}
                     ]
                 ]
             }
-            send_telegram_message(chat_id, "Great! Now click the button below to apply the special filter:", reply_markup=keyboard)
+            send_telegram_message(chat_id, "Great! Now click the button below to apply the professional filter:", reply_markup=keyboard)
             return 'ok'
 
-        # Handle other messages
         send_telegram_message(chat_id, "I only understand photos. Please send a photo to edit.")
 
     return 'ok'
 
 @app.route('/')
 def index():
-    return "Photo Editor Bot is running with Artistic Filter!"
+    return "Photo Editor Bot is running with Pro Filter!"
