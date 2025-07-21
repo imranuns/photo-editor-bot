@@ -1,7 +1,7 @@
 import os
 import requests
 from flask import Flask, request
-from PIL import Image, ImageOps, ImageEnhance
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import io
 import json
 
@@ -45,25 +45,61 @@ def get_image_from_telegram(file_id):
         print(f"Error downloading image: {e}")
         return None
 
-def apply_pro_filter(image):
-    """Applies a professional, cinematic filter to the image."""
+def apply_filter(image, filter_type):
+    """Applies a selected filter to the image."""
     try:
-        # 1. Slightly desaturate the image to give it a moody feel
-        color_enhancer = ImageEnhance.Color(image)
-        desaturated_image = color_enhancer.enhance(0.4) # Reduce color by 60%
-        
-        # 2. Increase contrast to make details stand out
-        contrast_enhancer = ImageEnhance.Contrast(desaturated_image)
-        contrasted_image = contrast_enhancer.enhance(1.3) # Increase contrast by 30%
+        if filter_type == 'saturate':
+            return ImageEnhance.Color(image).enhance(1.8)
+            
+        elif filter_type == 'enhance':
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.2)
+            enhancer = ImageEnhance.Color(image)
+            return enhancer.enhance(1.2)
 
-        # 3. Add a cool (blueish) tint to the shadows
-        # To do this, we create a blue layer and blend it
-        blue_layer = Image.new('RGB', contrasted_image.size, '#001122')
-        final_image = Image.blend(contrasted_image, blue_layer, alpha=0.15) # Blend 15% of the blue layer
-        
-        return final_image
+        elif filter_type == 'vivid':
+            color_enhancer = ImageEnhance.Color(image)
+            vivid_image = color_enhancer.enhance(1.6)
+            contrast_enhancer = ImageEnhance.Contrast(vivid_image)
+            return contrast_enhancer.enhance(1.3)
+
+        elif filter_type == 'dynamic':
+            contrast_enhancer = ImageEnhance.Contrast(image)
+            contrasted_image = contrast_enhancer.enhance(1.5)
+            return contrasted_image.filter(ImageFilter.SHARPEN)
+
+        elif filter_type == 'ember':
+            grayscale = ImageOps.grayscale(image)
+            return ImageOps.colorize(grayscale, black="#4D1A00", white="#FFD699")
+
+        elif filter_type == 'airy':
+            brightness_enhancer = ImageEnhance.Brightness(image)
+            bright_image = brightness_enhancer.enhance(1.3)
+            color_enhancer = ImageEnhance.Color(bright_image)
+            return color_enhancer.enhance(0.8)
+
+        elif filter_type == 'stormy':
+            contrast_enhancer = ImageEnhance.Contrast(image)
+            contrasted_image = contrast_enhancer.enhance(1.6)
+            blue_grey_layer = Image.new('RGB', contrasted_image.size, '#2A3441')
+            return Image.blend(contrasted_image, blue_grey_layer, alpha=0.25)
+
+        elif filter_type == 'cinematic':
+            color_enhancer = ImageEnhance.Color(image)
+            desaturated_image = color_enhancer.enhance(0.5)
+            contrast_enhancer = ImageEnhance.Contrast(desaturated_image)
+            contrasted_image = contrast_enhancer.enhance(1.4)
+            blue_layer = Image.new('RGB', contrasted_image.size, '#001122')
+            return Image.blend(contrasted_image, blue_layer, alpha=0.15)
+
+        elif filter_type == 'noir':
+            grayscale_image = ImageOps.grayscale(image)
+            contrast_enhancer = ImageEnhance.Contrast(grayscale_image)
+            return contrast_enhancer.enhance(1.8)
+
+        return image
     except Exception as e:
-        print(f"Error applying pro filter: {e}")
+        print(f"Error applying filter {filter_type}: {e}")
         return image # Return original image on failure
 
 # --- Webhook Handler ---
@@ -82,20 +118,19 @@ def webhook():
             send_telegram_message(chat_id, "Sorry, your photo session has expired. Please send the photo again.")
             return 'ok'
 
-        if data == 'pro_filter':
-            send_telegram_message(chat_id, "🎨 Applying the *Pro Filter*... This might take a moment.")
+        send_telegram_message(chat_id, f"🎨 Applying the *{data.capitalize()}* filter...")
 
-            original_image = get_image_from_telegram(file_id)
-            if original_image:
-                edited_image = apply_pro_filter(original_image)
-                
-                output_buffer = io.BytesIO()
-                edited_image.save(output_buffer, format='JPEG', quality=90)
-                output_buffer.seek(0)
-                
-                send_processed_photo(chat_id, output_buffer.getvalue(), "✅ Here is your professionally edited photo!")
-            else:
-                send_telegram_message(chat_id, "❌ Could not process the image.")
+        original_image = get_image_from_telegram(file_id)
+        if original_image:
+            edited_image = apply_filter(original_image, data)
+            
+            output_buffer = io.BytesIO()
+            edited_image.save(output_buffer, format='JPEG', quality=90)
+            output_buffer.seek(0)
+            
+            send_processed_photo(chat_id, output_buffer.getvalue(), f"✅ Here is your *{data.capitalize()}* edited photo!")
+        else:
+            send_telegram_message(chat_id, "❌ Could not process the image.")
         
         user_photo_session.pop(chat_id, None)
         return 'ok'
@@ -116,11 +151,23 @@ def webhook():
             keyboard = {
                 "inline_keyboard": [
                     [
-                        {"text": "✨ Apply Pro Filter", "callback_data": "pro_filter"}
+                        {"text": "🌈 Saturation", "callback_data": "saturate"},
+                        {"text": "✨ Enhance", "callback_data": "enhance"},
+                        {"text": "🌟 Vibrant", "callback_data": "vibrant"}
+                    ],
+                    [
+                        {"text": "⚡ Dynamic", "callback_data": "dynamic"},
+                        {"text": "🔥 Ember", "callback_data": "ember"},
+                        {"text": "💨 Airy", "callback_data": "airy"}
+                    ],
+                    [
+                        {"text": "⛈️ Stormy", "callback_data": "stormy"},
+                        {"text": "🎬 Cinematic", "callback_data": "cinematic"},
+                        {"text": "⚫ Noir (B&W)", "callback_data": "noir"}
                     ]
                 ]
             }
-            send_telegram_message(chat_id, "Great! Now click the button below to apply the professional filter:", reply_markup=keyboard)
+            send_telegram_message(chat_id, "Great! Now choose a professional filter to apply:", reply_markup=keyboard)
             return 'ok'
 
         send_telegram_message(chat_id, "I only understand photos. Please send a photo to edit.")
@@ -129,4 +176,4 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Photo Editor Bot is running with Pro Filter!"
+    return "Photo Editor Bot is running with multiple Pro Filters!"
