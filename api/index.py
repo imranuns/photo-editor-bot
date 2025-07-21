@@ -1,7 +1,7 @@
 import os
 import requests
 from flask import Flask, request
-from PIL import Image, ImageOps, ImageEnhance, ImageFilter
+from PIL import Image, ImageOps, ImageEnhance
 import io
 import json
 
@@ -11,7 +11,6 @@ app = Flask(__name__)
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
 # --- Session Management ---
-# To temporarily store the file_id of the photo being edited
 user_photo_session = {}
 
 # --- Telegram Functions ---
@@ -46,25 +45,23 @@ def get_image_from_telegram(file_id):
         print(f"Error downloading image: {e}")
         return None
 
-def apply_filter(image, filter_type):
-    """Applies a selected filter to the image."""
-    if filter_type == 'grayscale':
-        return ImageOps.grayscale(image)
-    elif filter_type == 'sepia':
-        # Sepia is grayscale with a color tint
-        grayscale = ImageOps.grayscale(image)
-        sepia_image = ImageOps.colorize(grayscale, black="#704214", white="#EAE0C8")
-        return sepia_image
-    elif filter_type == 'sharpen':
-        return image.filter(ImageFilter.SHARPEN)
-    elif filter_type == 'enhance':
-        # Auto-enhance brightness, contrast, and color
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.2) # Increase contrast
-        enhancer = ImageEnhance.Color(image)
-        image = enhancer.enhance(1.2) # Increase color saturation
-        return image
-    return image
+def apply_artistic_filter(image):
+    """Applies a custom artistic filter similar to the user's example."""
+    try:
+        # 1. Convert to grayscale to desaturate
+        grayscale_image = ImageOps.grayscale(image)
+        
+        # 2. Re-colorize with a cool tone (mapping black to dark blue, white to light gray)
+        colorized_image = ImageOps.colorize(grayscale_image, black="#222B3D", white="#DFE2E5")
+        
+        # 3. Increase contrast to make details pop
+        contrast_enhancer = ImageEnhance.Contrast(colorized_image)
+        final_image = contrast_enhancer.enhance(1.4)
+        
+        return final_image
+    except Exception as e:
+        print(f"Error applying artistic filter: {e}")
+        return image # Return original image on failure
 
 # --- Webhook Handler ---
 @app.route('/', methods=['POST'])
@@ -82,19 +79,20 @@ def webhook():
             send_telegram_message(chat_id, "Sorry, your photo session has expired. Please send the photo again.")
             return 'ok'
 
-        send_telegram_message(chat_id, f"🎨 Applying *{data}* filter...")
+        if data == 'artistic':
+            send_telegram_message(chat_id, "🎨 Applying the *Artistic* filter...")
 
-        original_image = get_image_from_telegram(file_id)
-        if original_image:
-            edited_image = apply_filter(original_image, data)
-            
-            output_buffer = io.BytesIO()
-            edited_image.save(output_buffer, format='JPEG')
-            output_buffer.seek(0)
-            
-            send_processed_photo(chat_id, output_buffer.getvalue(), f"✅ Here is your *{data}* edited photo!")
-        else:
-            send_telegram_message(chat_id, "❌ Could not process the image.")
+            original_image = get_image_from_telegram(file_id)
+            if original_image:
+                edited_image = apply_artistic_filter(original_image)
+                
+                output_buffer = io.BytesIO()
+                edited_image.save(output_buffer, format='JPEG')
+                output_buffer.seek(0)
+                
+                send_processed_photo(chat_id, output_buffer.getvalue(), "✅ Here is your artistically edited photo!")
+            else:
+                send_telegram_message(chat_id, "❌ Could not process the image.")
         
         # Clear the session
         user_photo_session.pop(chat_id, None)
@@ -113,22 +111,16 @@ def webhook():
         # Handle incoming photo
         if 'photo' in message:
             file_id = message['photo'][-1]['file_id']
-            # Store the file_id for the user to edit
             user_photo_session[chat_id] = file_id
             
             keyboard = {
                 "inline_keyboard": [
                     [
-                        {"text": "✨ Auto-Enhance", "callback_data": "enhance"},
-                        {"text": "🎨 Grayscale", "callback_data": "grayscale"}
-                    ],
-                    [
-                        {"text": "🎞️ Sepia", "callback_data": "sepia"},
-                        {"text": "🔪 Sharpen", "callback_data": "sharpen"}
+                        {"text": "✨ Apply Artistic Filter", "callback_data": "artistic"}
                     ]
                 ]
             }
-            send_telegram_message(chat_id, "Great! Now choose an effect to apply to your photo:", reply_markup=keyboard)
+            send_telegram_message(chat_id, "Great! Now click the button below to apply the special filter:", reply_markup=keyboard)
             return 'ok'
 
         # Handle other messages
@@ -138,4 +130,4 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Photo Editor Bot is running!"
+    return "Photo Editor Bot is running with Artistic Filter!"
