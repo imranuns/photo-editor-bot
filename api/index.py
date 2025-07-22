@@ -21,33 +21,32 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         payload['reply_markup'] = json.dumps(reply_markup)
     requests.post(url, json=payload)
 
-def edit_message_reply_markup(chat_id, message_id):
-    """Removes the inline keyboard from a message."""
-    url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
-    payload = {'chat_id': chat_id, 'message_id': message_id, 'reply_markup': None}
-    requests.post(url, json=payload)
-
 def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=None):
-    """Sends a new photo or edits an existing one, now with button support."""
+    """Sends a new photo or edits an existing one, with proper button handling."""
     output_buffer = io.BytesIO()
     image.save(output_buffer, format='JPEG', quality=95)
     output_buffer.seek(0)
     
+    # To remove buttons, we must send an empty inline_keyboard.
+    # If reply_markup is None, we set it to an empty keyboard to remove existing buttons.
+    final_reply_markup = reply_markup if reply_markup is not None else {'inline_keyboard': []}
+
     if message_id:
         url = f"https://api.telegram.org/bot{TOKEN}/editMessageMedia"
         media = {'type': 'photo', 'media': 'attach://edited_image.jpg', 'caption': caption, 'parse_mode': 'Markdown'}
         files = {'edited_image.jpg': output_buffer}
-        data = {'chat_id': chat_id, 'message_id': message_id, 'media': json.dumps(media)}
-        if reply_markup:
-            data['reply_markup'] = json.dumps(reply_markup)
+        data = {
+            'chat_id': chat_id, 
+            'message_id': message_id, 
+            'media': json.dumps(media),
+            'reply_markup': json.dumps(final_reply_markup)
+        }
         requests.post(url, data=data, files=files)
         return message_id
     else:
         url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
         files = {'photo': ('edited_image.jpg', output_buffer, 'image/jpeg')}
-        data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'Markdown'}
-        if reply_markup:
-            data['reply_markup'] = json.dumps(reply_markup)
+        data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(final_reply_markup)}
         response = requests.post(url, files=files, data=data)
         if response.ok:
             return response.json()['result']['message_id']
@@ -67,7 +66,6 @@ def get_image_from_telegram(file_id):
         return None
 
 def apply_adjustment(image, adjustment_type, value):
-    """Applies an adjustment to the image."""
     if adjustment_type == 'brightness': enhancer = ImageEnhance.Brightness(image)
     elif adjustment_type == 'contrast': enhancer = ImageEnhance.Contrast(image)
     elif adjustment_type == 'saturation': enhancer = ImageEnhance.Color(image)
@@ -83,10 +81,8 @@ def apply_adjustment(image, adjustment_type, value):
     return enhancer.enhance(1 + 0.15 * value)
 
 def apply_filter(image, filter_type):
-    """Applies a one-click filter."""
     if filter_type == 'saturate': return ImageEnhance.Color(image).enhance(1.5)
     elif filter_type == 'enhance': 
-        # Made stronger: more contrast, color, and sharpness
         enhanced_image = ImageEnhance.Contrast(image).enhance(1.4)
         enhanced_image = ImageEnhance.Color(enhanced_image).enhance(1.2)
         enhanced_image = ImageEnhance.Sharpness(enhanced_image).enhance(1.3)
@@ -110,7 +106,7 @@ def get_filters_menu():
         [{"text": "🌈 Saturation", "callback_data": "filter_saturate"}, {"text": "✨ Enhance", "callback_data": "filter_enhance"}],
         [{"text": "⚡ Dynamic", "callback_data": "filter_dynamic"}, {"text": "💨 Airy", "callback_data": "filter_airy"}],
         [{"text": "🎬 Cinematic", "callback_data": "filter_cinematic"}, {"text": "⚫ Noir (B&W)", "callback_data": "filter_noir"}],
-        [{"text": "↩️ Back", "callback_data": "menu_main"}]
+        [{"text": "↩️ Back to Main Menu", "callback_data": "menu_main"}]
     ]}
 
 def get_adjust_menu():
@@ -118,13 +114,13 @@ def get_adjust_menu():
         [{"text": "☀️ Brightness", "callback_data": "adjust_brightness"}, {"text": "🌗 Contrast", "callback_data": "adjust_contrast"}],
         [{"text": "🎨 Saturation", "callback_data": "adjust_saturation"}, {"text": "🌡️ Warmth", "callback_data": "adjust_warmth"}],
         [{"text": "🌒 Shadow", "callback_data": "adjust_shadow"}, {"text": "↩️ Reset", "callback_data": "adjust_reset"}],
-        [{"text": "✅ Apply & Send", "callback_data": "adjust_send"}]
+        [{"text": "✅ Apply & Send", "callback_data": "adjust_send"}, {"text": "↩️ Back to Main Menu", "callback_data": "menu_main"}]
     ]}
 
 def get_adjust_submenu(tool):
     return {"inline_keyboard": [
         [{"text": "➕ Increase", "callback_data": f"do_{tool}_1"}, {"text": "➖ Decrease", "callback_data": f"do_{tool}_-1"}],
-        [{"text": "↩️ Back to Adjust", "callback_data": "menu_adjust"}]
+        [{"text": "↩️ Back to Adjust Menu", "callback_data": "menu_adjust"}]
     ]}
 
 # --- Webhook Handler ---
@@ -140,7 +136,6 @@ def webhook():
         
         session = user_photo_session.get(chat_id)
         if not session:
-            edit_message_reply_markup(chat_id, message_id)
             send_telegram_message(chat_id, "Sorry, your photo session has expired. Please send the photo again.")
             return 'ok'
 
@@ -153,17 +148,14 @@ def webhook():
 
         elif data.startswith('filter_'):
             filter_type = data.split('_')[1]
-            edit_message_reply_markup(chat_id, message_id) # Remove buttons
-            send_telegram_message(chat_id, f"🎨 Applying *{filter_type.capitalize()}* filter...")
             edited_image = apply_filter(session['original_image'], filter_type)
-            send_or_edit_photo(chat_id, edited_image, f"✅ Filter *{filter_type.capitalize()}* applied!")
+            send_or_edit_photo(chat_id, edited_image, f"✅ Filter *{filter_type.capitalize()}* applied!", message_id=session.get('message_id'), reply_markup=None)
             user_photo_session.pop(chat_id, None)
 
         elif data.startswith('adjust_'):
             tool = data.split('_')[1]
             if tool == 'send':
-                edit_message_reply_markup(chat_id, message_id) # Remove buttons
-                send_or_edit_photo(chat_id, session['current_image'], "✅ Your final edit has been sent!")
+                send_or_edit_photo(chat_id, session['current_image'], "✅ Your final edit has been sent!", message_id=session.get('message_id'), reply_markup=None)
                 user_photo_session.pop(chat_id, None)
             elif tool == 'reset':
                 session['current_image'] = session['original_image'].copy()
@@ -206,4 +198,4 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Advanced Photo Editor Bot is running with new features!"
+    return "Advanced Photo Editor Bot is running with button fixes!"
