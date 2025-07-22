@@ -12,7 +12,9 @@ app = Flask(__name__)
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 ADMIN_ID = os.environ.get('ADMIN_ID')
 JSONBIN_API_KEY = os.environ.get('JSONBIN_API_KEY')
-JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID') 
+JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
+# *** አዲስ እና ወሳኝ: የቦትዎን የተጠቃሚ ስም (username) ያለ '@' እዚህ ያስገቡ (Vercel ላይ) ***
+BOT_USERNAME = os.environ.get('BOT_USERNAME') # Example: 'Editphotoss_bot'
 
 # --- Session Management ---
 user_photo_session = {}
@@ -198,10 +200,10 @@ def webhook():
         user_name = message['from'].get('first_name', 'User')
         text = message.get('text', '')
 
-        # --- Handle New Members in a Group ---
         if 'new_chat_members' in message:
             group_id = message['chat']['id']
             adder_id = message['from']['id']
+            adder_name = message['from'].get('first_name', 'User')
             user_data = get_user_data(adder_id)
             if user_data:
                 task = user_data.get('add_task', {})
@@ -211,14 +213,12 @@ def webhook():
                     if task['added_count'] >= MEMBERS_TO_ADD:
                         task['completed'] = True
                         user_data['credits'] = user_data.get('credits', 0) + CREDITS_FOR_ADDING_MEMBERS
-                        bot_username = TOKEN.split(':')[0] # A way to get the bot's username
-                        completion_message = f"🎉 እንኳን ደስ አለዎት {user_name}! *{MEMBERS_TO_ADD}* ሰዎችን ስለጨመሩ *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን አግኝተዋል።\n\nአሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{bot_username}"
+                        completion_message = f"🎉 እንኳን ደስ አለዎት {adder_name}! *{MEMBERS_TO_ADD}* ሰዎችን ስለጨመሩ *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን አግኝተዋል።\n\nአሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{BOT_USERNAME}"
                         send_telegram_message(group_id, completion_message)
                     user_data['add_task'] = task
                     update_user_data(adder_id, user_data)
             return 'ok'
 
-        # --- Handle Normal Commands ---
         command_parts = text.split()
         command = command_parts[0].lower()
         args = command_parts[1:]
@@ -233,13 +233,12 @@ def webhook():
             if invited_by:
                 inviter_data = get_user_data(invited_by)
                 if inviter_data:
-                    inviter_data['credits'] += INVITE_CREDIT_AWARD
+                    inviter_data['credits'] = inviter_data.get('credits', 0) + INVITE_CREDIT_AWARD
                     update_user_data(invited_by, inviter_data)
                     send_telegram_message(invited_by, f"🎉 Someone joined using your link! You've earned *{INVITE_CREDIT_AWARD}* credit(s).")
 
         if command == '/start':
-            bot_username = TOKEN.split(':')[0]
-            invite_link = f"https://t.me/{bot_username}?start={user_id}"
+            invite_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
             welcome_message = f"👋 Hello {user_name}!\n\n💰 You have *{user_data.get('credits', 0)}* credits.\n\nTo earn *{CREDITS_FOR_ADDING_MEMBERS}* more credits, add me to a group, make me an admin, and then send `/unlock` in the group.\n\nOr share your invite link:\n`{invite_link}`"
             send_telegram_message(chat_id, welcome_message)
 
@@ -255,6 +254,22 @@ def webhook():
             db_data = get_db()
             user_count = len(db_data.get('users', {}))
             send_telegram_message(chat_id, f"📊 *Bot Status*\n\nTotal Users: *{user_count}*")
+
+        elif is_admin and command == '/broadcast':
+            if not args:
+                send_telegram_message(chat_id, "Usage: `/broadcast <message>`")
+            else:
+                broadcast_text = " ".join(args)
+                db_data = get_db()
+                users = db_data.get('users', {})
+                sent_count = 0
+                for uid in users.keys():
+                    try:
+                        send_telegram_message(uid, broadcast_text)
+                        sent_count += 1
+                        time.sleep(0.1)
+                    except Exception: pass
+                send_telegram_message(chat_id, f"✅ Broadcast sent to *{sent_count}* of *{len(users)}* users.")
 
         elif is_admin and command == '/addcredit':
             if len(args) == 2:
@@ -287,4 +302,4 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Advanced Photo Editor Bot with all features is running!"
+    return "Advanced Photo Editor Bot - All Bugs Fixed!"
