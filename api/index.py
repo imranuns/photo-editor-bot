@@ -13,7 +13,6 @@ TOKEN = os.environ.get('TELEGRAM_TOKEN')
 ADMIN_ID = os.environ.get('ADMIN_ID')
 JSONBIN_API_KEY = os.environ.get('JSONBIN_API_KEY')
 JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
-# *** አዲስ እና ወሳኝ: የቦትዎን የተጠቃሚ ስም (username) ያለ '@' እዚህ ያስገቡ (Vercel ላይ) ***
 BOT_USERNAME = os.environ.get('BOT_USERNAME') # Example: 'Editphotoss_bot'
 
 # --- Session Management ---
@@ -228,7 +227,7 @@ def webhook():
 
         if not user_data:
             invited_by = args[0] if len(args) > 0 and command == '/start' else None
-            user_data = {'credits': 0, 'invited_by': invited_by, 'last_daily': 0}
+            user_data = {'credits': 0, 'invited_by': invited_by, 'add_task': {}}
             update_user_data(user_id, user_data)
             if invited_by:
                 inviter_data = get_user_data(invited_by)
@@ -238,9 +237,22 @@ def webhook():
                     send_telegram_message(invited_by, f"🎉 Someone joined using your link! You've earned *{INVITE_CREDIT_AWARD}* credit(s).")
 
         if command == '/start':
+            start_message = "👋 Hello {user_name}!\n\nWelcome to the Photo Editor Bot.\n\nHere are the available commands:\n\n📸 `/edit` - Start editing a new photo.\n💰 `/mycredit` - Check your credit balance.\n🔗 `/mylink` - Get your personal invite link.\n🎁 `/unlock` - Earn credits by adding members in a group.\n🆘 `/support` - Contact the admin for help."
+            send_telegram_message(chat_id, start_message.format(user_name=user_name))
+
+        elif command == '/edit':
+            if user_data.get('credits', 0) < EDIT_COST:
+                send_telegram_message(chat_id, f"❌ You don't have enough credits to edit. You need *{EDIT_COST}* credit(s).")
+            else:
+                user_photo_session[chat_id] = {'status': 'waiting_for_photo'}
+                send_telegram_message(chat_id, "Please send me the photo you want to edit now.")
+        
+        elif command == '/mycredit':
+            send_telegram_message(chat_id, f"💰 You currently have *{user_data.get('credits', 0)}* credits.")
+
+        elif command == '/mylink':
             invite_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-            welcome_message = f"👋 Hello {user_name}!\n\n💰 You have *{user_data.get('credits', 0)}* credits.\n\nTo earn *{CREDITS_FOR_ADDING_MEMBERS}* more credits, add me to a group, make me an admin, and then send `/unlock` in the group.\n\nOr share your invite link:\n`{invite_link}`"
-            send_telegram_message(chat_id, welcome_message)
+            send_telegram_message(chat_id, f"🔗 Here is your personal invite link:\n\n`{invite_link}`")
 
         elif command == '/unlock':
             if chat_id < 0:
@@ -250,6 +262,15 @@ def webhook():
             else:
                 send_telegram_message(chat_id, "This command only works in a group.")
         
+        elif command == '/support':
+             if not args:
+                send_telegram_message(chat_id, "Please enter your message after the command.\nExample: `/support Hello`")
+             else:
+                support_message = " ".join(args)
+                forward_message = f"🆘 *New Support Message*\n\n*From:* {user_name} (ID: `{user_id}`)\n\n*Message:* {support_message}"
+                if ADMIN_ID: send_telegram_message(ADMIN_ID, forward_message)
+                send_telegram_message(chat_id, "✅ Your message has been sent to the admin.")
+
         elif is_admin and command == '/status':
             db_data = get_db()
             user_count = len(db_data.get('users', {}))
@@ -284,19 +305,20 @@ def webhook():
             else: send_telegram_message(chat_id, "Usage: `/addcredit <user_id> <amount>`")
         
         elif 'photo' in message:
-            if user_data.get('credits', 0) < EDIT_COST:
-                send_telegram_message(chat_id, f"❌ You don't have enough credits to edit. You need *{EDIT_COST}* credit(s).")
-                return 'ok'
-            
-            user_data['credits'] -= EDIT_COST
-            update_user_data(user_id, user_data)
-            file_id = message['photo'][-1]['file_id']
-            image = get_image_from_telegram(file_id)
-            if image:
-                message_id = send_or_edit_photo(chat_id, image, "Photo received! Choose a category:", reply_markup=get_main_menu())
-                if message_id:
-                    user_photo_session[chat_id] = {'file_id': file_id, 'original_image': image.copy(), 'current_image': image.copy(), 'message_id': message_id}
-            else: send_telegram_message(chat_id, "❌ Sorry, I couldn't download your photo.")
+            session = user_photo_session.get(chat_id)
+            if session and session.get('status') == 'waiting_for_photo':
+                user_data['credits'] -= EDIT_COST
+                update_user_data(user_id, user_data)
+                
+                file_id = message['photo'][-1]['file_id']
+                image = get_image_from_telegram(file_id)
+                if image:
+                    message_id = send_or_edit_photo(chat_id, image, "Photo received! Choose a category:", reply_markup=get_main_menu())
+                    if message_id:
+                        user_photo_session[chat_id] = {'file_id': file_id, 'original_image': image.copy(), 'current_image': image.copy(), 'message_id': message_id}
+                else: send_telegram_message(chat_id, "❌ Sorry, I couldn't download your photo.")
+            else:
+                send_telegram_message(chat_id, "To edit a photo, please send the `/edit` command first.")
         
     return 'ok'
 
