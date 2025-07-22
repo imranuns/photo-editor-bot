@@ -4,43 +4,66 @@ from flask import Flask, request
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import io
 import json
+import time
 
 app = Flask(__name__)
 
 # --- Environment Variables ---
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
+ADMIN_ID = os.environ.get('ADMIN_ID')
+JSONBIN_API_KEY = os.environ.get('JSONBIN_API_KEY')
+JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID') 
 
 # --- Session Management ---
 user_photo_session = {}
+
+# --- Constants ---
+CREDITS_FOR_ADDING_MEMBERS = 15
+MEMBERS_TO_ADD = 10
+INVITE_CREDIT_AWARD = 1
+EDIT_COST = 1
+
+# --- Database Functions (JSONBin.io) ---
+def get_db():
+    if not JSONBIN_BIN_ID or not JSONBIN_API_KEY: raise Exception("JSONBin API Key or Bin ID is missing.")
+    headers = {'X-Master-Key': JSONBIN_API_KEY, 'X-Bin-Meta': 'false'}
+    req = requests.get(f'https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}', headers=headers)
+    req.raise_for_status()
+    return req.json()
+
+def update_db(data):
+    if not JSONBIN_BIN_ID or not JSONBIN_API_KEY: raise Exception("JSONBin API Key or Bin ID is missing.")
+    headers = {'Content-Type': 'application/json', 'X-Master-Key': JSONBIN_API_KEY}
+    req = requests.put(f'https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}', json=data, headers=headers)
+    req.raise_for_status()
+
+def get_user_data(user_id):
+    db_data = get_db()
+    return db_data.get('users', {}).get(str(user_id))
+
+def update_user_data(user_id, data):
+    db_data = get_db()
+    if 'users' not in db_data: db_data['users'] = {}
+    db_data['users'][str(user_id)] = data
+    update_db(db_data)
 
 # --- Telegram Functions ---
 def send_telegram_message(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
-    if reply_markup:
-        payload['reply_markup'] = json.dumps(reply_markup)
+    if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
     requests.post(url, json=payload)
 
 def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=None):
-    """Sends a new photo or edits an existing one, with proper button handling."""
     output_buffer = io.BytesIO()
     image.save(output_buffer, format='JPEG', quality=95)
     output_buffer.seek(0)
-    
-    # To remove buttons, we must send an empty inline_keyboard.
-    # If reply_markup is None, we set it to an empty keyboard to remove existing buttons.
     final_reply_markup = reply_markup if reply_markup is not None else {'inline_keyboard': []}
-
     if message_id:
         url = f"https://api.telegram.org/bot{TOKEN}/editMessageMedia"
         media = {'type': 'photo', 'media': 'attach://edited_image.jpg', 'caption': caption, 'parse_mode': 'Markdown'}
         files = {'edited_image.jpg': output_buffer}
-        data = {
-            'chat_id': chat_id, 
-            'message_id': message_id, 
-            'media': json.dumps(media),
-            'reply_markup': json.dumps(final_reply_markup)
-        }
+        data = {'chat_id': chat_id, 'message_id': message_id, 'media': json.dumps(media), 'reply_markup': json.dumps(final_reply_markup)}
         requests.post(url, data=data, files=files)
         return message_id
     else:
@@ -48,8 +71,7 @@ def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=No
         files = {'photo': ('edited_image.jpg', output_buffer, 'image/jpeg')}
         data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'Markdown', 'reply_markup': json.dumps(final_reply_markup)}
         response = requests.post(url, files=files, data=data)
-        if response.ok:
-            return response.json()['result']['message_id']
+        if response.ok: return response.json()['result']['message_id']
     return None
 
 # --- Image Processing Functions ---
@@ -100,7 +122,6 @@ def apply_filter(image, filter_type):
 # --- UI Menus ---
 def get_main_menu():
     return {"inline_keyboard": [[{"text": "🎨 Filters", "callback_data": "menu_filters"}, {"text": "🛠️ Adjust", "callback_data": "menu_adjust"}]]}
-
 def get_filters_menu():
     return {"inline_keyboard": [
         [{"text": "🌈 Saturation", "callback_data": "filter_saturate"}, {"text": "✨ Enhance", "callback_data": "filter_enhance"}],
@@ -108,7 +129,6 @@ def get_filters_menu():
         [{"text": "🎬 Cinematic", "callback_data": "filter_cinematic"}, {"text": "⚫ Noir (B&W)", "callback_data": "filter_noir"}],
         [{"text": "↩️ Back to Main Menu", "callback_data": "menu_main"}]
     ]}
-
 def get_adjust_menu():
     return {"inline_keyboard": [
         [{"text": "☀️ Brightness", "callback_data": "adjust_brightness"}, {"text": "🌗 Contrast", "callback_data": "adjust_contrast"}],
@@ -116,7 +136,6 @@ def get_adjust_menu():
         [{"text": "🌒 Shadow", "callback_data": "adjust_shadow"}, {"text": "↩️ Reset", "callback_data": "adjust_reset"}],
         [{"text": "✅ Apply & Send", "callback_data": "adjust_send"}, {"text": "↩️ Back to Main Menu", "callback_data": "menu_main"}]
     ]}
-
 def get_adjust_submenu(tool):
     return {"inline_keyboard": [
         [{"text": "➕ Increase", "callback_data": f"do_{tool}_1"}, {"text": "➖ Decrease", "callback_data": f"do_{tool}_-1"}],
@@ -170,32 +189,102 @@ def webhook():
             session['current_image'] = apply_adjustment(session['current_image'], tool, value)
             user_photo_session[chat_id] = session
             send_or_edit_photo(chat_id, session['current_image'], "Preview:", message_id=session.get('message_id'), reply_markup=get_adjust_submenu(tool))
-
         return 'ok'
 
     if 'message' in update:
         message = update['message']
+        user_id = message['from']['id']
         chat_id = message['chat']['id']
-        
-        if 'text' in message and message['text'] == '/start':
-            send_telegram_message(chat_id, "👋 Welcome to the Advanced Photo Editor Bot!\n\nPlease send me a photo to get started.")
+        user_name = message['from'].get('first_name', 'User')
+        text = message.get('text', '')
+
+        # --- Handle New Members in a Group ---
+        if 'new_chat_members' in message:
+            group_id = message['chat']['id']
+            adder_id = message['from']['id']
+            user_data = get_user_data(adder_id)
+            if user_data:
+                task = user_data.get('add_task', {})
+                if task.get('group_id') == group_id and not task.get('completed'):
+                    new_member_count = len(message['new_chat_members'])
+                    task['added_count'] = task.get('added_count', 0) + new_member_count
+                    if task['added_count'] >= MEMBERS_TO_ADD:
+                        task['completed'] = True
+                        user_data['credits'] = user_data.get('credits', 0) + CREDITS_FOR_ADDING_MEMBERS
+                        bot_username = TOKEN.split(':')[0] # A way to get the bot's username
+                        completion_message = f"🎉 እንኳን ደስ አለዎት {user_name}! *{MEMBERS_TO_ADD}* ሰዎችን ስለጨመሩ *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን አግኝተዋል።\n\nአሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{bot_username}"
+                        send_telegram_message(group_id, completion_message)
+                    user_data['add_task'] = task
+                    update_user_data(adder_id, user_data)
             return 'ok'
 
-        if 'photo' in message:
+        # --- Handle Normal Commands ---
+        command_parts = text.split()
+        command = command_parts[0].lower()
+        args = command_parts[1:]
+        
+        is_admin = str(user_id) == ADMIN_ID
+        user_data = get_user_data(user_id)
+
+        if not user_data:
+            invited_by = args[0] if len(args) > 0 and command == '/start' else None
+            user_data = {'credits': 0, 'invited_by': invited_by, 'last_daily': 0}
+            update_user_data(user_id, user_data)
+            if invited_by:
+                inviter_data = get_user_data(invited_by)
+                if inviter_data:
+                    inviter_data['credits'] += INVITE_CREDIT_AWARD
+                    update_user_data(invited_by, inviter_data)
+                    send_telegram_message(invited_by, f"🎉 Someone joined using your link! You've earned *{INVITE_CREDIT_AWARD}* credit(s).")
+
+        if command == '/start':
+            bot_username = TOKEN.split(':')[0]
+            invite_link = f"https://t.me/{bot_username}?start={user_id}"
+            welcome_message = f"👋 Hello {user_name}!\n\n💰 You have *{user_data.get('credits', 0)}* credits.\n\nTo earn *{CREDITS_FOR_ADDING_MEMBERS}* more credits, add me to a group, make me an admin, and then send `/unlock` in the group.\n\nOr share your invite link:\n`{invite_link}`"
+            send_telegram_message(chat_id, welcome_message)
+
+        elif command == '/unlock':
+            if chat_id < 0:
+                user_data['add_task'] = {'group_id': chat_id, 'added_count': 0, 'completed': False}
+                update_user_data(user_id, user_data)
+                send_telegram_message(chat_id, f"✅ Task started for {user_name}!\n\nNow, add *{MEMBERS_TO_ADD}* members to this group to earn *{CREDITS_FOR_ADDING_MEMBERS}* credits. I must be an admin to count the members.")
+            else:
+                send_telegram_message(chat_id, "This command only works in a group.")
+        
+        elif is_admin and command == '/status':
+            db_data = get_db()
+            user_count = len(db_data.get('users', {}))
+            send_telegram_message(chat_id, f"📊 *Bot Status*\n\nTotal Users: *{user_count}*")
+
+        elif is_admin and command == '/addcredit':
+            if len(args) == 2:
+                target_user_id, amount = args[0], int(args[1])
+                target_data = get_user_data(target_user_id)
+                if target_data:
+                    target_data['credits'] = target_data.get('credits', 0) + amount
+                    update_user_data(target_user_id, target_data)
+                    send_telegram_message(chat_id, f"✅ Successfully added *{amount}* credits to user `{target_user_id}`.")
+                    send_telegram_message(target_user_id, f"🎉 Admin has added *{amount}* credits to your account!")
+                else: send_telegram_message(chat_id, "❌ User not found.")
+            else: send_telegram_message(chat_id, "Usage: `/addcredit <user_id> <amount>`")
+        
+        elif 'photo' in message:
+            if user_data.get('credits', 0) < EDIT_COST:
+                send_telegram_message(chat_id, f"❌ You don't have enough credits to edit. You need *{EDIT_COST}* credit(s).")
+                return 'ok'
+            
+            user_data['credits'] -= EDIT_COST
+            update_user_data(user_id, user_data)
             file_id = message['photo'][-1]['file_id']
             image = get_image_from_telegram(file_id)
             if image:
                 message_id = send_or_edit_photo(chat_id, image, "Photo received! Choose a category:", reply_markup=get_main_menu())
                 if message_id:
                     user_photo_session[chat_id] = {'file_id': file_id, 'original_image': image.copy(), 'current_image': image.copy(), 'message_id': message_id}
-            else:
-                send_telegram_message(chat_id, "❌ Sorry, I couldn't download your photo.")
-            return 'ok'
-
-        send_telegram_message(chat_id, "I only understand photos. Please send a photo to edit.")
-
+            else: send_telegram_message(chat_id, "❌ Sorry, I couldn't download your photo.")
+        
     return 'ok'
 
 @app.route('/')
 def index():
-    return "Advanced Photo Editor Bot is running with button fixes!"
+    return "Advanced Photo Editor Bot with all features is running!"
