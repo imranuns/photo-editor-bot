@@ -13,14 +13,11 @@ TOKEN = os.environ.get('TELEGRAM_TOKEN')
 ADMIN_ID = os.environ.get('ADMIN_ID')
 JSONBIN_API_KEY = os.environ.get('JSONBIN_API_KEY')
 JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
-BOT_USERNAME = os.environ.get('BOT_USERNAME') # Example: 'Editphotoss_bot'
-
-# --- Session Management ---
-user_photo_session = {}
+BOT_USERNAME = os.environ.get('BOT_USERNAME')
 
 # --- Constants ---
 CREDITS_FOR_ADDING_MEMBERS = 15
-MEMBERS_TO_ADD = 10
+MEMBERS_TO_ADD = 2
 INVITE_CREDIT_AWARD = 1
 EDIT_COST = 1
 
@@ -153,43 +150,59 @@ def webhook():
         data = callback_query['data']
         chat_id = callback_query['message']['chat']['id']
         message_id = callback_query['message']['message_id']
+        user_id = callback_query['from']['id']
         
-        session = user_photo_session.get(chat_id)
-        if not session:
+        user_data = get_user_data(user_id)
+        session = user_data.get('session', {})
+
+        if not session.get('file_id'):
             send_telegram_message(chat_id, "Sorry, your photo session has expired. Please send the photo again.")
             return 'ok'
 
+        original_image = get_image_from_telegram(session['file_id'])
+        current_image = Image.open(io.BytesIO(bytes.fromhex(session['current_image_hex']))) if 'current_image_hex' in session else original_image.copy()
+
         if data == 'menu_main':
-            send_or_edit_photo(chat_id, session['current_image'], "Choose a category:", message_id=session.get('message_id'), reply_markup=get_main_menu())
+            send_or_edit_photo(chat_id, current_image, "Choose a category:", message_id=message_id, reply_markup=get_main_menu())
         elif data == 'menu_filters':
-            send_or_edit_photo(chat_id, session['current_image'], "Select a one-click filter:", message_id=session.get('message_id'), reply_markup=get_filters_menu())
+            send_or_edit_photo(chat_id, current_image, "Select a one-click filter:", message_id=message_id, reply_markup=get_filters_menu())
         elif data == 'menu_adjust':
-            send_or_edit_photo(chat_id, session['current_image'], "Adjust tools:", message_id=session.get('message_id'), reply_markup=get_adjust_menu())
+            send_or_edit_photo(chat_id, current_image, "Adjust tools:", message_id=message_id, reply_markup=get_adjust_menu())
 
         elif data.startswith('filter_'):
             filter_type = data.split('_')[1]
-            edited_image = apply_filter(session['original_image'], filter_type)
-            send_or_edit_photo(chat_id, edited_image, f"✅ Filter *{filter_type.capitalize()}* applied!", message_id=session.get('message_id'), reply_markup=None)
-            user_photo_session.pop(chat_id, None)
+            edited_image = apply_filter(original_image, filter_type)
+            send_or_edit_photo(chat_id, edited_image, f"✅ Filter *{filter_type.capitalize()}* applied!", message_id=message_id, reply_markup=None)
+            user_data['session'] = {}
+            update_user_data(user_id, user_data)
 
         elif data.startswith('adjust_'):
             tool = data.split('_')[1]
             if tool == 'send':
-                send_or_edit_photo(chat_id, session['current_image'], "✅ Your final edit has been sent!", message_id=session.get('message_id'), reply_markup=None)
-                user_photo_session.pop(chat_id, None)
+                send_or_edit_photo(chat_id, current_image, "✅ Your final edit has been sent!", message_id=message_id, reply_markup=None)
+                user_data['session'] = {}
+                update_user_data(user_id, user_data)
             elif tool == 'reset':
-                session['current_image'] = session['original_image'].copy()
-                user_photo_session[chat_id] = session
-                send_or_edit_photo(chat_id, session['current_image'], "🔄 Image has been reset to original.", message_id=session.get('message_id'), reply_markup=get_adjust_menu())
+                current_image = original_image.copy()
+                output_buffer = io.BytesIO()
+                current_image.save(output_buffer, format='JPEG')
+                session['current_image_hex'] = output_buffer.getvalue().hex()
+                user_data['session'] = session
+                update_user_data(user_id, user_data)
+                send_or_edit_photo(chat_id, current_image, "🔄 Image has been reset to original.", message_id=message_id, reply_markup=get_adjust_menu())
             else:
-                send_or_edit_photo(chat_id, session['current_image'], f"Adjusting *{tool.capitalize()}*. Use the buttons below.", message_id=session.get('message_id'), reply_markup=get_adjust_submenu(tool))
+                send_or_edit_photo(chat_id, current_image, f"Adjusting *{tool.capitalize()}*. Use the buttons below.", message_id=message_id, reply_markup=get_adjust_submenu(tool))
 
         elif data.startswith('do_'):
             parts = data.split('_')
             tool, value = parts[1], int(parts[2])
-            session['current_image'] = apply_adjustment(session['current_image'], tool, value)
-            user_photo_session[chat_id] = session
-            send_or_edit_photo(chat_id, session['current_image'], "Preview:", message_id=session.get('message_id'), reply_markup=get_adjust_submenu(tool))
+            current_image = apply_adjustment(current_image, tool, value)
+            output_buffer = io.BytesIO()
+            current_image.save(output_buffer, format='JPEG')
+            session['current_image_hex'] = output_buffer.getvalue().hex()
+            user_data['session'] = session
+            update_user_data(user_id, user_data)
+            send_or_edit_photo(chat_id, current_image, "Preview:", message_id=message_id, reply_markup=get_adjust_submenu(tool))
         return 'ok'
 
     if 'message' in update:
@@ -227,7 +240,7 @@ def webhook():
 
         if not user_data:
             invited_by = args[0] if len(args) > 0 and command == '/start' else None
-            user_data = {'credits': 0, 'invited_by': invited_by, 'add_task': {}}
+            user_data = {'credits': 0, 'invited_by': invited_by, 'add_task': {}, 'session': {}}
             update_user_data(user_id, user_data)
             if invited_by:
                 inviter_data = get_user_data(invited_by)
@@ -244,7 +257,8 @@ def webhook():
             if user_data.get('credits', 0) < EDIT_COST:
                 send_telegram_message(chat_id, f"❌ You don't have enough credits to edit. You need *{EDIT_COST}* credit(s).")
             else:
-                user_photo_session[chat_id] = {'status': 'waiting_for_photo'}
+                user_data['session'] = {'status': 'waiting_for_photo'}
+                update_user_data(user_id, user_data)
                 send_telegram_message(chat_id, "Please send me the photo you want to edit now.")
         
         elif command == '/mycredit':
@@ -305,17 +319,21 @@ def webhook():
             else: send_telegram_message(chat_id, "Usage: `/addcredit <user_id> <amount>`")
         
         elif 'photo' in message:
-            session = user_photo_session.get(chat_id)
-            if session and session.get('status') == 'waiting_for_photo':
+            session = user_data.get('session', {})
+            if session.get('status') == 'waiting_for_photo':
                 user_data['credits'] -= EDIT_COST
-                update_user_data(user_id, user_data)
                 
                 file_id = message['photo'][-1]['file_id']
                 image = get_image_from_telegram(file_id)
                 if image:
                     message_id = send_or_edit_photo(chat_id, image, "Photo received! Choose a category:", reply_markup=get_main_menu())
                     if message_id:
-                        user_photo_session[chat_id] = {'file_id': file_id, 'original_image': image.copy(), 'current_image': image.copy(), 'message_id': message_id}
+                        output_buffer = io.BytesIO()
+                        image.save(output_buffer, format='JPEG')
+                        current_image_hex = output_buffer.getvalue().hex()
+                        
+                        user_data['session'] = {'file_id': file_id, 'message_id': message_id, 'current_image_hex': current_image_hex}
+                        update_user_data(user_id, user_data)
                 else: send_telegram_message(chat_id, "❌ Sorry, I couldn't download your photo.")
             else:
                 send_telegram_message(chat_id, "To edit a photo, please send the `/edit` command first.")
@@ -324,4 +342,4 @@ def webhook():
 
 @app.route('/')
 def index():
-    return "Advanced Photo Editor Bot - All Bugs Fixed!"
+    return "Advanced Photo Editor Bot - Session Fixed!"
