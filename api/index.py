@@ -11,8 +11,6 @@ app = Flask(__name__)
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
 # --- Session Management ---
-# Stores the state of the user's current editing session
-# {'file_id': str, 'original_image': PIL.Image, 'current_image': PIL.Image, 'message_id': int}
 user_photo_session = {}
 
 # --- Telegram Functions ---
@@ -23,12 +21,10 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         payload['reply_markup'] = json.dumps(reply_markup)
     requests.post(url, json=payload)
 
-def edit_telegram_message(chat_id, message_id, text, reply_markup=None):
-    """Edits an existing text message, typically to remove buttons."""
-    url = f"https://api.telegram.org/bot{TOKEN}/editMessageText"
-    payload = {'chat_id': chat_id, 'message_id': message_id, 'text': text, 'parse_mode': 'Markdown'}
-    if reply_markup:
-        payload['reply_markup'] = json.dumps(reply_markup)
+def edit_message_reply_markup(chat_id, message_id):
+    """Removes the inline keyboard from a message."""
+    url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
+    payload = {'chat_id': chat_id, 'message_id': message_id, 'reply_markup': None}
     requests.post(url, json=payload)
 
 def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=None):
@@ -39,7 +35,7 @@ def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=No
     
     if message_id:
         url = f"https://api.telegram.org/bot{TOKEN}/editMessageMedia"
-        media = {'type': 'photo', 'media': 'attach://edited_image.jpg', 'caption': caption}
+        media = {'type': 'photo', 'media': 'attach://edited_image.jpg', 'caption': caption, 'parse_mode': 'Markdown'}
         files = {'edited_image.jpg': output_buffer}
         data = {'chat_id': chat_id, 'message_id': message_id, 'media': json.dumps(media)}
         if reply_markup:
@@ -89,7 +85,12 @@ def apply_adjustment(image, adjustment_type, value):
 def apply_filter(image, filter_type):
     """Applies a one-click filter."""
     if filter_type == 'saturate': return ImageEnhance.Color(image).enhance(1.5)
-    elif filter_type == 'enhance': return ImageEnhance.Contrast(ImageEnhance.Color(image).enhance(1.4)).enhance(1.4)
+    elif filter_type == 'enhance': 
+        # Made stronger: more contrast, color, and sharpness
+        enhanced_image = ImageEnhance.Contrast(image).enhance(1.4)
+        enhanced_image = ImageEnhance.Color(enhanced_image).enhance(1.2)
+        enhanced_image = ImageEnhance.Sharpness(enhanced_image).enhance(1.3)
+        return enhanced_image
     elif filter_type == 'dynamic': return ImageEnhance.Contrast(image).enhance(1.5).filter(ImageFilter.SHARPEN)
     elif filter_type == 'airy': return ImageEnhance.Color(ImageEnhance.Brightness(image).enhance(1.2)).enhance(0.8)
     elif filter_type == 'cinematic':
@@ -117,7 +118,7 @@ def get_adjust_menu():
         [{"text": "☀️ Brightness", "callback_data": "adjust_brightness"}, {"text": "🌗 Contrast", "callback_data": "adjust_contrast"}],
         [{"text": "🎨 Saturation", "callback_data": "adjust_saturation"}, {"text": "🌡️ Warmth", "callback_data": "adjust_warmth"}],
         [{"text": "🌒 Shadow", "callback_data": "adjust_shadow"}, {"text": "↩️ Reset", "callback_data": "adjust_reset"}],
-        [{"text": "✅ Apply & Send", "callback_data": "adjust_send"}, {"text": "↩️ Back", "callback_data": "menu_main"}]
+        [{"text": "✅ Apply & Send", "callback_data": "adjust_send"}]
     ]}
 
 def get_adjust_submenu(tool):
@@ -139,7 +140,8 @@ def webhook():
         
         session = user_photo_session.get(chat_id)
         if not session:
-            edit_telegram_message(chat_id, message_id, "Sorry, your photo session has expired. Please send the photo again.")
+            edit_message_reply_markup(chat_id, message_id)
+            send_telegram_message(chat_id, "Sorry, your photo session has expired. Please send the photo again.")
             return 'ok'
 
         if data == 'menu_main':
@@ -151,7 +153,8 @@ def webhook():
 
         elif data.startswith('filter_'):
             filter_type = data.split('_')[1]
-            edit_telegram_message(chat_id, message_id, f"🎨 Applying *{filter_type.capitalize()}* filter...")
+            edit_message_reply_markup(chat_id, message_id) # Remove buttons
+            send_telegram_message(chat_id, f"🎨 Applying *{filter_type.capitalize()}* filter...")
             edited_image = apply_filter(session['original_image'], filter_type)
             send_or_edit_photo(chat_id, edited_image, f"✅ Filter *{filter_type.capitalize()}* applied!")
             user_photo_session.pop(chat_id, None)
@@ -159,6 +162,7 @@ def webhook():
         elif data.startswith('adjust_'):
             tool = data.split('_')[1]
             if tool == 'send':
+                edit_message_reply_markup(chat_id, message_id) # Remove buttons
                 send_or_edit_photo(chat_id, session['current_image'], "✅ Your final edit has been sent!")
                 user_photo_session.pop(chat_id, None)
             elif tool == 'reset':
@@ -189,8 +193,6 @@ def webhook():
             file_id = message['photo'][-1]['file_id']
             image = get_image_from_telegram(file_id)
             if image:
-                # *** የተስተካከለው ክፍል ***
-                # ፎቶውን ከምናሌው ጋር በአንድ ላይ እንልካለን
                 message_id = send_or_edit_photo(chat_id, image, "Photo received! Choose a category:", reply_markup=get_main_menu())
                 if message_id:
                     user_photo_session[chat_id] = {'file_id': file_id, 'original_image': image.copy(), 'current_image': image.copy(), 'message_id': message_id}
