@@ -153,6 +153,7 @@ def webhook():
         user_id = callback_query['from']['id']
         
         user_data = get_user_data(user_id)
+        if not user_data: return 'ok'
         session = user_data.get('session', {})
 
         if not session.get('file_id'):
@@ -250,16 +251,8 @@ def webhook():
                     send_telegram_message(invited_by, f"🎉 Someone joined using your link! You've earned *{INVITE_CREDIT_AWARD}* credit(s).")
 
         if command == '/start':
-            start_message = "👋 Hello {user_name}!\n\nWelcome to the Photo Editor Bot.\n\nHere are the available commands:\n\n📸 `/edit` - Start editing a new photo.\n💰 `/mycredit` - Check your credit balance.\n🔗 `/mylink` - Get your personal invite link.\n🎁 `/unlock` - Earn credits by adding members in a group.\n🆘 `/support` - Contact the admin for help."
+            start_message = "👋 Hello {user_name}!\n\nWelcome to the Photo Editor Bot.\n\nTo start, just send me a photo!\n\n*Other Commands:*\n💰 `/mycredit`\n🔗 `/mylink`\n🎁 `/unlock`\n🆘 `/support`"
             send_telegram_message(chat_id, start_message.format(user_name=user_name))
-
-        elif command == '/edit':
-            if user_data.get('credits', 0) < EDIT_COST:
-                send_telegram_message(chat_id, f"❌ You don't have enough credits to edit. You need *{EDIT_COST}* credit(s).")
-            else:
-                user_data['session'] = {'status': 'waiting_for_photo'}
-                update_user_data(user_id, user_data)
-                send_telegram_message(chat_id, "Please send me the photo you want to edit now.")
         
         elif command == '/mycredit':
             send_telegram_message(chat_id, f"💰 You currently have *{user_data.get('credits', 0)}* credits.")
@@ -319,27 +312,28 @@ def webhook():
             else: send_telegram_message(chat_id, "Usage: `/addcredit <user_id> <amount>`")
         
         elif 'photo' in message:
-            session = user_data.get('session', {})
-            if session.get('status') == 'waiting_for_photo':
-                user_data['credits'] -= EDIT_COST
-                
-                file_id = message['photo'][-1]['file_id']
-                image = get_image_from_telegram(file_id)
-                if image:
-                    message_id = send_or_edit_photo(chat_id, image, "Photo received! Choose a category:", reply_markup=get_main_menu())
-                    if message_id:
-                        output_buffer = io.BytesIO()
-                        image.save(output_buffer, format='JPEG')
-                        current_image_hex = output_buffer.getvalue().hex()
-                        
-                        user_data['session'] = {'file_id': file_id, 'message_id': message_id, 'current_image_hex': current_image_hex}
-                        update_user_data(user_id, user_data)
-                else: send_telegram_message(chat_id, "❌ Sorry, I couldn't download your photo.")
-            else:
-                send_telegram_message(chat_id, "To edit a photo, please send the `/edit` command first.")
+            if user_data.get('credits', 0) < EDIT_COST:
+                send_telegram_message(chat_id, f"❌ You don't have enough credits to edit. You need *{EDIT_COST}* credit(s).")
+                return 'ok'
+            
+            user_data['credits'] -= EDIT_COST
+            
+            file_id = message['photo'][-1]['file_id']
+            image = get_image_from_telegram(file_id)
+            if image:
+                message_id = send_or_edit_photo(chat_id, image, "Photo received! Choose a category:", reply_markup=get_main_menu())
+                if message_id:
+                    output_buffer = io.BytesIO()
+                    image.save(output_buffer, format='JPEG')
+                    current_image_hex = output_buffer.getvalue().hex()
+                    
+                    user_data['session'] = {'file_id': file_id, 'message_id': message_id, 'current_image_hex': current_image_hex}
+                    update_user_data(user_id, user_data)
+            else: 
+                send_telegram_message(chat_id, "❌ Sorry, I couldn't download your photo.")
         
     return 'ok'
 
 @app.route('/')
 def index():
-    return "Advanced Photo Editor Bot - Session Fixed!"
+    return "Advanced Photo Editor Bot - FINAL FIX!"
