@@ -17,8 +17,8 @@ JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
 BOT_USERNAME = os.environ.get('BOT_USERNAME')
 
 # --- Constants ---
-CREDITS_FOR_ADDING_MEMBERS = 1
-MEMBERS_TO_ADD = 2
+CREDITS_FOR_ADDING_MEMBERS = 15
+MEMBERS_TO_ADD = 10
 INVITE_CREDIT_AWARD = 1
 EDIT_COST = 1
 
@@ -60,6 +60,15 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         requests.post(url, json=payload)
     except Exception as e:
         print(f"መልዕክት በመላክ ላይ ስህተት ተፈጥሯል: {e}")
+
+def answer_callback_query(callback_query_id):
+    """Answers a callback query to remove the loading state on the button."""
+    url = f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery"
+    payload = {'callback_query_id': callback_query_id}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"Callback query በመመለስ ላይ ስህተት: {e}")
 
 def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=None):
     """Sends or edits a photo message with an inline keyboard."""
@@ -151,8 +160,16 @@ def apply_filter(image, filter_type):
     return image
 
 # --- UI Menus (Amharic) ---
+def get_start_menu():
+    """Generates the main menu for the /start command."""
+    return {"inline_keyboard": [
+        [{"text": "💰 ክሬዲቴን አሳይ", "callback_data": "mycredit"}, {"text": "🔗 መጋበዣ ሊንክ", "callback_data": "mylink"}],
+        [{"text": "🆘 እርዳታ", "callback_data": "support"}]
+    ]}
+
 def get_main_menu():
     return {"inline_keyboard": [[{"text": "🎨 ማጣሪያዎች (Filters)", "callback_data": "menu_filters"}, {"text": "🛠️ ማስተካከያዎች (Adjust)", "callback_data": "menu_adjust"}]]}
+
 def get_filters_menu():
     return {"inline_keyboard": [
         [{"text": "🌈 Saturation", "callback_data": "filter_saturate"}, {"text": "✨ Enhance", "callback_data": "filter_enhance"}],
@@ -160,6 +177,7 @@ def get_filters_menu():
         [{"text": "🎬 Cinematic", "callback_data": "filter_cinematic"}, {"text": "⚫ Noir (B&W)", "callback_data": "filter_noir"}],
         [{"text": "↩️ ወደ ዋና ማውጫ ተመለስ", "callback_data": "menu_main"}]
     ]}
+
 def get_adjust_menu():
     return {"inline_keyboard": [
         [{"text": "☀️ Brightness", "callback_data": "adjust_brightness"}, {"text": "🌗 Contrast", "callback_data": "adjust_contrast"}],
@@ -167,6 +185,7 @@ def get_adjust_menu():
         [{"text": "🌒 Shadow", "callback_data": "adjust_shadow"}, {"text": "🔄 ሁሉንም መልስ", "callback_data": "adjust_reset"}],
         [{"text": "✅ ተግብር እና ላክ", "callback_data": "adjust_send"}, {"text": "↩️ ወደ ዋና ማውጫ ተመለስ", "callback_data": "menu_main"}]
     ]}
+
 def get_adjust_submenu(tool):
     return {"inline_keyboard": [
         [{"text": "➕ ጨምር", "callback_data": f"do_{tool}_1"}, {"text": "➖ ቀንስ", "callback_data": f"do_{tool}_-1"}],
@@ -192,17 +211,39 @@ def webhook():
         user_data = db_data.get('users', {}).get(user_id)
 
         if not user_data:
+            answer_callback_query(callback_query['id'])
             send_telegram_message(chat_id, "ይቅርታ, የእርስዎን መረጃ ማግኘት አልቻልኩም። እባክዎ /start ብለው እንደገና ይጀምሩ።")
             return 'ok'
             
+        # --- Main Menu Button Handlers ---
+        if data == 'mycredit':
+            answer_callback_query(callback_query['id'])
+            credit_balance = user_data.get('credits', 0)
+            send_telegram_message(chat_id, f"💰 አሁን ያለዎት *{credit_balance}* ክሬዲት ነው።")
+            return 'ok'
+        
+        elif data == 'mylink':
+            answer_callback_query(callback_query['id'])
+            invite_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
+            send_telegram_message(chat_id, f"🔗 የእርስዎ የግል መጋበዣ ሊንክ ይኸውና:\n\n`{invite_link}`\n\nለጓደኞችዎ ያጋሩ።")
+            return 'ok'
+
+        elif data == 'support':
+            answer_callback_query(callback_query['id'])
+            send_telegram_message(chat_id, "🆘 ለእርዳታ ወይም አስተያየት ለመስጠት፣ መልዕክትዎን በዚህ መልኩ ይላኩ:\n`/support የእርስዎ መልዕክት`")
+            return 'ok'
+
+        # --- Photo Editing Session Handlers ---
         session = user_data.get('session', {})
 
         if not session.get('file_id'):
+            answer_callback_query(callback_query['id'])
             send_telegram_message(chat_id, "ይቅርታ, የፎቶ ክፍለ ጊዜዎ ጊዜው አልፎበታል። እባክዎ ፎቶውን እንደገና ይላኩ።")
             return 'ok'
 
         original_image = get_image_from_telegram(session['file_id'])
         if not original_image:
+            answer_callback_query(callback_query['id'])
             send_telegram_message(chat_id, "ይቅርታ, ዋናውን ፎቶ ማግኘት አልቻልኩም። እባክዎ ፎቶውን እንደገና ይላኩ።")
             return 'ok'
         
@@ -334,13 +375,12 @@ def webhook():
                     print(f"የግብዣ ክሬዲት በመስጠት ላይ ስህተት: {e}")
 
         if 'photo' in message:
-            # Ensure user_data exists before proceeding
             if not user_data:
                 send_telegram_message(chat_id, "እባክዎ መጀመሪያ ቦቱን በ /start ትዕዛዝ ያስጀምሩት።")
                 return 'ok'
 
             if user_data.get('credits', 0) < EDIT_COST:
-                send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው። በ /mylink ተጨማሪ ያግኙ።")
+                send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው። ተጨማሪ ክሬዲት ለማግኘት ጓደኛዎችዎን ይጋብዙ።")
                 return 'ok'
 
             user_data['credits'] -= EDIT_COST
@@ -373,7 +413,6 @@ def webhook():
             args = command_parts[1:]
             is_admin = user_id == ADMIN_ID
             
-            # Ensure user_data exists for command handling
             if not user_data and command != '/start':
                  send_telegram_message(chat_id, "እባክዎ መጀመሪያ ቦቱን በ /start ትዕዛዝ ያስጀምሩት።")
                  return 'ok'
@@ -382,20 +421,9 @@ def webhook():
                 start_message = (
                     f"👋 ሰላም {user_name}!\n\n"
                     "ወደ ፎቶ ማስተካከያ ቦት እንኳን በደህና መጡ።\n\n"
-                    "ለመጀመር በቀላሉ **ፎቶ ይላኩልኝ**!\n\n"
-                    "ሌሎች ትዕዛዞች:\n"
-                    "💰 `/mycredit` - ያሉዎትን ክሬዲቶች ለማየት።\n"
-                    "🔗 `/mylink` - የግል መጋበዣ ሊንክ ለማግኘት።\n"
-                    "🆘 `/support` - ለእርዳታ አስተዳዳሪውን ለማግኘት።"
+                    "ለመጀመር በቀላሉ **ፎቶ ይላኩልኝ** ወይም ከታች ያሉትን አማራጮች ይጠቀሙ።"
                 )
-                send_telegram_message(chat_id, start_message)
-
-            elif command == '/mycredit':
-                send_telegram_message(chat_id, f"💰 አሁን ያለዎት *{user_data.get('credits', 0)}* ክሬዲት ነው።")
-
-            elif command == '/mylink':
-                invite_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-                send_telegram_message(chat_id, f"🔗 የእርስዎ የግል መጋበዣ ሊንክ ይኸውና:\n\n`{invite_link}`\n\nለጓደኞችዎ ያጋሩ። እነሱ ቦቱን ሲጀምሩ እርስዎ *{INVITE_CREDIT_AWARD}* ክሬዲት ያገኛሉ!")
+                send_telegram_message(chat_id, start_message, reply_markup=get_start_menu())
             
             elif command == '/support':
                 if not args:
@@ -408,7 +436,6 @@ def webhook():
 
             # Admin commands...
             elif is_admin and command == '/status':
-                # No need to fetch db_data again, it's already fetched
                 user_count = len(users_data)
                 send_telegram_message(chat_id, f"📊 *የቦት ሁኔታ*\n\nጠቅላላ ተጠቃሚዎች: *{user_count}*")
 
