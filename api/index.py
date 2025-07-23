@@ -175,7 +175,7 @@ def apply_filter(image, filter_type):
 def get_start_menu():
     """Generates the main menu for the /start command."""
     return {"inline_keyboard": [
-        [{"text": "📸 ፎቶ ማስተካከል (Edit)", "callback_data": "edit"}, {"text": "� ክሬዲቴን አሳይ", "callback_data": "mycredit"}],
+        [{"text": "📸 ፎቶ ማስተካከል (Edit)", "callback_data": "edit"}, {"text": "💰 ክሬዲቴን አሳይ", "callback_data": "mycredit"}],
         [{"text": "🎁 ክሬዲት ማግኘት (Unlock)", "callback_data": "unlock"}, {"text": "🔗 መጋበዣ ሊንክ", "callback_data": "mylink"}],
         [{"text": "🆘 እርዳታ", "callback_data": "support"}]
     ]}
@@ -359,7 +359,11 @@ def webhook():
                                 f"🎉 እንኳን ደስ አለዎት {adder_name}! *{MEMBERS_TO_ADD}* ሰዎችን ስለጨመሩ *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን አግኝተዋል።\n\n"
                                 f"አሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{BOT_USERNAME}"
                             )
+                            
+                            # Added logging for debugging purposes
+                            print(f"DEBUG: Preparing to send completion message to group {chat_id}.")
                             send_telegram_message(chat_id, completion_message)
+                            print(f"DEBUG: Completion message function called for group {chat_id}.")
                             
                         adder_data['add_task'] = task
                         users_data[adder_id] = adder_data
