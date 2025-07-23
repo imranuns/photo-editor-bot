@@ -18,7 +18,7 @@ BOT_USERNAME = os.environ.get('BOT_USERNAME')
 
 # --- Constants ---
 CREDITS_FOR_ADDING_MEMBERS = 2
-MEMBERS_TO_ADD = 1 # Changed from 10 to 1
+MEMBERS_TO_ADD = 1 
 INVITE_CREDIT_AWARD = 1
 EDIT_COST = 1
 
@@ -75,7 +75,6 @@ def answer_callback_query(callback_query_id, text=None):
 def edit_message_reply_markup(chat_id, message_id):
     """Edits the reply markup of a message to remove the buttons."""
     url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
-    # To remove the keyboard, we send an empty inline_keyboard
     payload = {'chat_id': chat_id, 'message_id': message_id, 'reply_markup': json.dumps({'inline_keyboard': []})}
     try:
         requests.post(url, json=payload)
@@ -205,9 +204,16 @@ def get_adjust_submenu(tool):
         [{"text": "↩️ ወደ ማስተካከያ ማውጫ ተመለስ", "callback_data": "menu_adjust"}]
     ]}
 
-# --- Main Webhook Handler ---
+# --- Route Handlers ---
+
+@app.route('/favicon.ico')
+def favicon():
+    """Handles browser requests for the favicon, preventing 404 errors in logs."""
+    return '', 204
+
 @app.route('/', methods=['POST'])
 def webhook():
+    """This is the main webhook that handles all Telegram updates."""
     update = request.get_json()
     db_data = None 
     db_changed = False 
@@ -280,7 +286,7 @@ def webhook():
             send_telegram_message(chat_id, "ይቅርታ, ዋናውን ፎቶ ማግኘት አልቻልኩም። እባክዎ እንደገና ይሞክሩ።")
             return 'ok'
         
-        answer_callback_query(callback_query['id']) # Acknowledge the button press
+        answer_callback_query(callback_query['id']) 
         current_image = reapply_adjustments(original_image, session.get('adjustments', []))
 
         if data == 'menu_main':
@@ -360,7 +366,6 @@ def webhook():
                                 f"አሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{BOT_USERNAME}"
                             )
                             
-                            # Added logging for debugging purposes
                             print(f"DEBUG: Preparing to send completion message to group {chat_id}.")
                             send_telegram_message(chat_id, completion_message)
                             print(f"DEBUG: Completion message function called for group {chat_id}.")
@@ -502,4 +507,5 @@ def webhook():
 
 @app.route('/')
 def index():
+    """Handles simple GET requests to the root, confirming the bot is alive."""
     return "Photo Editor Bot is alive and fully automated!"
