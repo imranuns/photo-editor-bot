@@ -61,10 +61,12 @@ def send_telegram_message(chat_id, text, reply_markup=None):
     except Exception as e:
         print(f"መልዕክት በመላክ ላይ ስህተት ተፈጥሯል: {e}")
 
-def answer_callback_query(callback_query_id):
+def answer_callback_query(callback_query_id, text=None):
     """Answers a callback query to remove the loading state on the button."""
     url = f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery"
     payload = {'callback_query_id': callback_query_id}
+    if text:
+        payload['text'] = text
     try:
         requests.post(url, json=payload)
     except Exception as e:
@@ -163,7 +165,8 @@ def apply_filter(image, filter_type):
 def get_start_menu():
     """Generates the main menu for the /start command."""
     return {"inline_keyboard": [
-        [{"text": "💰 ክሬዲቴን አሳይ", "callback_data": "mycredit"}, {"text": "🔗 መጋበዣ ሊንክ", "callback_data": "mylink"}],
+        [{"text": "📸 ፎቶ ማስተካከል (Edit)", "callback_data": "edit"}, {"text": "💰 ክሬዲቴን አሳይ", "callback_data": "mycredit"}],
+        [{"text": "🎁 ክሬዲት ማግኘት (Unlock)", "callback_data": "unlock"}, {"text": "🔗 መጋበዣ ሊንክ", "callback_data": "mylink"}],
         [{"text": "🆘 እርዳታ", "callback_data": "support"}]
     ]}
 
@@ -216,16 +219,36 @@ def webhook():
             return 'ok'
             
         # --- Main Menu Button Handlers ---
-        if data == 'mycredit':
+        if data == 'edit':
             answer_callback_query(callback_query['id'])
-            credit_balance = user_data.get('credits', 0)
-            send_telegram_message(chat_id, f"💰 አሁን ያለዎት *{credit_balance}* ክሬዲት ነው።")
+            if user_data.get('credits', 0) < EDIT_COST:
+                send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው።")
+            else:
+                user_data['session'] = {'status': 'waiting_for_photo'}
+                db_data['users'][user_id] = user_data
+                update_db(db_data)
+                send_telegram_message(chat_id, "እባክዎ አሁን ማስተካከል የሚፈልጉትን ፎቶ ይላኩ።")
+            return 'ok'
+
+        if data == 'mycredit':
+            answer_callback_query(callback_query['id'], text=f"💰 ያለዎት ክሬዲት: {user_data.get('credits', 0)}")
             return 'ok'
         
         elif data == 'mylink':
             answer_callback_query(callback_query['id'])
             invite_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
             send_telegram_message(chat_id, f"🔗 የእርስዎ የግል መጋበዣ ሊንክ ይኸውና:\n\n`{invite_link}`\n\nለጓደኞችዎ ያጋሩ።")
+            return 'ok'
+
+        elif data == 'unlock':
+            answer_callback_query(callback_query['id'])
+            unlock_message = (
+                "🎁 *እንዴት ነጻ ክሬዲት ማግኘት ይቻላል?*\n\n"
+                f"1. ይህንን ቦት ወደ ሚፈልጉት ግሩፕ 'Add Member' በማድረግ ያስገቡት።\n"
+                f"2. ቦቱን የገሩፑ አድሚን (Admin) ያድርጉት።\n"
+                f"3. *{MEMBERS_TO_ADD}* ሰዎችን ወደ ግሩፑ ሲያስገቡ (add ሲያደርጉ) ቦቱ በራስ-ሰር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲት ይሰጦታል።"
+            )
+            send_telegram_message(chat_id, unlock_message)
             return 'ok'
 
         elif data == 'support':
@@ -237,16 +260,16 @@ def webhook():
         session = user_data.get('session', {})
 
         if not session.get('file_id'):
-            answer_callback_query(callback_query['id'])
-            send_telegram_message(chat_id, "ይቅርታ, የፎቶ ክፍለ ጊዜዎ ጊዜው አልፎበታል። እባክዎ ፎቶውን እንደገና ይላኩ።")
+            answer_callback_query(callback_query['id'], text="የፎቶ ማስተካከያ ጊዜው አልፎበታል።")
             return 'ok'
 
         original_image = get_image_from_telegram(session['file_id'])
         if not original_image:
             answer_callback_query(callback_query['id'])
-            send_telegram_message(chat_id, "ይቅርታ, ዋናውን ፎቶ ማግኘት አልቻልኩም። እባክዎ ፎቶውን እንደገና ይላኩ።")
+            send_telegram_message(chat_id, "ይቅርታ, ዋናውን ፎቶ ማግኘት አልቻልኩም። እባክዎ እንደገና ይሞክሩ።")
             return 'ok'
         
+        answer_callback_query(callback_query['id']) # Acknowledge the button press
         current_image = reapply_adjustments(original_image, session.get('adjustments', []))
 
         if data == 'menu_main':
@@ -378,30 +401,30 @@ def webhook():
             if not user_data:
                 send_telegram_message(chat_id, "እባክዎ መጀመሪያ ቦቱን በ /start ትዕዛዝ ያስጀምሩት።")
                 return 'ok'
-
-            if user_data.get('credits', 0) < EDIT_COST:
-                send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው። ተጨማሪ ክሬዲት ለማግኘት ጓደኛዎችዎን ይጋብዙ።")
-                return 'ok'
-
-            user_data['credits'] -= EDIT_COST
-            db_changed = True
-            file_id = message['photo'][-1]['file_id']
             
-            send_telegram_message(chat_id, "⏳ ፎቶዎን በማዘጋጀት ላይ ነው...")
+            session = user_data.get('session', {})
+            if session.get('status') == 'waiting_for_photo':
+                user_data['credits'] -= EDIT_COST
+                db_changed = True
+                file_id = message['photo'][-1]['file_id']
+                
+                send_telegram_message(chat_id, "⏳ ፎቶዎን በማዘጋጀት ላይ ነው...")
 
-            image = get_image_from_telegram(file_id)
-            if image:
-                caption = "የማስተካከያ አይነት ይምረጡ።"
-                message_id = send_or_edit_photo(chat_id, image, caption, reply_markup=get_main_menu())
+                image = get_image_from_telegram(file_id)
+                if image:
+                    caption = "የማስተካከያ አይነት ይምረጡ።"
+                    message_id = send_or_edit_photo(chat_id, image, caption, reply_markup=get_main_menu())
 
-                if message_id:
-                    user_data['session'] = {'file_id': file_id, 'message_id': message_id, 'adjustments': []}
+                    if message_id:
+                        user_data['session'] = {'file_id': file_id, 'message_id': message_id, 'adjustments': []}
+                    else:
+                        user_data['credits'] += EDIT_COST
+                        send_telegram_message(chat_id, "❌ ስህተት ተፈጥሯል። የኤዲቲንግ ክፍለ ጊዜ መጀመር አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
                 else:
                     user_data['credits'] += EDIT_COST
-                    send_telegram_message(chat_id, "❌ ስህተት ተፈጥሯል። የኤዲቲንግ ክፍለ ጊዜ መጀመር አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
+                    send_telegram_message(chat_id, "❌ ይቅርታ, ፎቶዎን ማውረድ አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
             else:
-                user_data['credits'] += EDIT_COST
-                send_telegram_message(chat_id, "❌ ይቅርታ, ፎቶዎን ማውረድ አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
+                send_telegram_message(chat_id, "ፎቶ ለማስተካከል መጀመሪያ '📸 ፎቶ ማስተካከል (Edit)' የሚለውን አዝራር ይጫኑ።")
             
             users_data[user_id] = user_data
             update_db(db_data)
@@ -421,7 +444,7 @@ def webhook():
                 start_message = (
                     f"👋 ሰላም {user_name}!\n\n"
                     "ወደ ፎቶ ማስተካከያ ቦት እንኳን በደህና መጡ።\n\n"
-                    "ለመጀመር በቀላሉ **ፎቶ ይላኩልኝ** ወይም ከታች ያሉትን አማራጮች ይጠቀሙ።"
+                    "ከታች ያሉትን አማራጮች ይጠቀሙ።"
                 )
                 send_telegram_message(chat_id, start_message, reply_markup=get_start_menu())
             
