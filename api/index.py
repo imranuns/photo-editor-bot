@@ -17,8 +17,8 @@ JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
 BOT_USERNAME = os.environ.get('BOT_USERNAME')
 
 # --- Constants ---
-CREDITS_FOR_ADDING_MEMBERS = 2  # Changed from 15 to 2
-MEMBERS_TO_ADD = 1
+CREDITS_FOR_ADDING_MEMBERS = 2
+MEMBERS_TO_ADD = 1 # Changed from 10 to 1
 INVITE_CREDIT_AWARD = 1
 EDIT_COST = 1
 
@@ -71,6 +71,16 @@ def answer_callback_query(callback_query_id, text=None):
         requests.post(url, json=payload)
     except Exception as e:
         print(f"Callback query በመመለስ ላይ ስህተት: {e}")
+
+def edit_message_reply_markup(chat_id, message_id):
+    """Edits the reply markup of a message to remove the buttons."""
+    url = f"https://api.telegram.org/bot{TOKEN}/editMessageReplyMarkup"
+    # To remove the keyboard, we send an empty inline_keyboard
+    payload = {'chat_id': chat_id, 'message_id': message_id, 'reply_markup': json.dumps({'inline_keyboard': []})}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"Reply markup በማስተካከል ላይ ስህተት: {e}")
 
 def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=None):
     """Sends or edits a photo message with an inline keyboard."""
@@ -165,7 +175,7 @@ def apply_filter(image, filter_type):
 def get_start_menu():
     """Generates the main menu for the /start command."""
     return {"inline_keyboard": [
-        [{"text": "📸 ፎቶ ማስተካከል (Edit)", "callback_data": "edit"}, {"text": "💰 ክሬዲቴን አሳይ", "callback_data": "mycredit"}],
+        [{"text": "📸 ፎቶ ማስተካከል (Edit)", "callback_data": "edit"}, {"text": "� ክሬዲቴን አሳይ", "callback_data": "mycredit"}],
         [{"text": "🎁 ክሬዲት ማግኘት (Unlock)", "callback_data": "unlock"}, {"text": "🔗 መጋበዣ ሊንክ", "callback_data": "mylink"}],
         [{"text": "🆘 እርዳታ", "callback_data": "support"}]
     ]}
@@ -221,6 +231,7 @@ def webhook():
         # --- Main Menu Button Handlers ---
         if data == 'edit':
             answer_callback_query(callback_query['id'])
+            edit_message_reply_markup(chat_id, message_id)
             if user_data.get('credits', 0) < EDIT_COST:
                 send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው።")
             else:
@@ -231,23 +242,28 @@ def webhook():
             return 'ok'
 
         if data == 'mycredit':
-            answer_callback_query(callback_query['id'], text=f"💰 ያለዎት ክሬዲት: {user_data.get('credits', 0)}")
+            answer_callback_query(callback_query['id'])
+            edit_message_reply_markup(chat_id, message_id)
+            send_telegram_message(chat_id, f"💰 አሁን ያለዎት *{user_data.get('credits', 0)}* ክሬዲት ነው።")
             return 'ok'
         
         elif data == 'mylink':
             answer_callback_query(callback_query['id'])
+            edit_message_reply_markup(chat_id, message_id)
             invite_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
             send_telegram_message(chat_id, f"🔗 የእርስዎ የግል መጋበዣ ሊንክ ይኸውና:\n\n`{invite_link}`\n\nለጓደኞችዎ ያጋሩ።")
             return 'ok'
 
         elif data == 'unlock':
             answer_callback_query(callback_query['id'])
-            unlock_message = f"ግሩፑ ላይ `/unlock` ይበሉና *{MEMBERS_TO_ADD}* ሰዎችን ወደ ግሩፑ ሲያስገቡ ቦቱ በራስ-ሰር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲት ይሰጦታል።"
+            edit_message_reply_markup(chat_id, message_id)
+            unlock_message = f"እዚ @havivss ግሩፑ ላይ `/unlock` ይበሉና *{MEMBERS_TO_ADD}* ሰዎችን ወደ ግሩፑ ሲያስገቡ ቦቱ በራስ-ሰር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲት ይሰጦታል።"
             send_telegram_message(chat_id, unlock_message)
             return 'ok'
 
         elif data == 'support':
             answer_callback_query(callback_query['id'])
+            edit_message_reply_markup(chat_id, message_id)
             send_telegram_message(chat_id, "🆘 ለእርዳታ ወይም አስተያየት ለመስጠት፣ መልዕክትዎን በዚህ መልኩ ይላኩ:\n`/support የእርስዎ መልዕክት`")
             return 'ok'
 
