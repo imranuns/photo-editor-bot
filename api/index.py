@@ -17,8 +17,8 @@ JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
 BOT_USERNAME = os.environ.get('BOT_USERNAME')
 
 # --- Constants ---
-CREDITS_FOR_ADDING_MEMBERS = 15
-MEMBERS_TO_ADD = 10
+CREDITS_FOR_ADDING_MEMBERS = 2  # Changed from 15 to 2
+MEMBERS_TO_ADD = 1
 INVITE_CREDIT_AWARD = 1
 EDIT_COST = 1
 
@@ -242,12 +242,7 @@ def webhook():
 
         elif data == 'unlock':
             answer_callback_query(callback_query['id'])
-            unlock_message = (
-                "🎁 *እንዴት ነጻ ክሬዲት ማግኘት ይቻላል?*\n\n"
-                f"1. ይህንን ቦት ወደ ሚፈልጉት ግሩፕ 'Add Member' በማድረግ ያስገቡት።\n"
-                f"2. ቦቱን የገሩፑ አድሚን (Admin) ያድርጉት።\n"
-                f"3. *{MEMBERS_TO_ADD}* ሰዎችን ወደ ግሩፑ ሲያስገቡ (add ሲያደርጉ) ቦቱ በራስ-ሰር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲት ይሰጦታል።"
-            )
+            unlock_message = f"ግሩፑ ላይ `/unlock` ይበሉና *{MEMBERS_TO_ADD}* ሰዎችን ወደ ግሩፑ ሲያስገቡ ቦቱ በራስ-ሰር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲት ይሰጦታል።"
             send_telegram_message(chat_id, unlock_message)
             return 'ok'
 
@@ -314,29 +309,6 @@ def webhook():
         if db_changed:
             db_data['users'][user_id] = user_data
             update_db(db_data)
-        
-        return 'ok'
-
-    # --- Handler for Bot Status Changes (e.g., being added to a group) ---
-    if 'my_chat_member' in update:
-        my_chat_member = update['my_chat_member']
-        new_status = my_chat_member.get('new_chat_member', {}).get('status')
-        
-        if new_status in ['member', 'administrator']:
-            adder_id = str(my_chat_member['from']['id'])
-            group_id = my_chat_member['chat']['id']
-            
-            db_data = get_db()
-            users_data = db_data.get('users', {})
-            adder_data = users_data.get(adder_id)
-
-            if adder_data:
-                adder_data['add_task'] = {'group_id': group_id, 'added_count': 0, 'completed': False}
-                users_data[adder_id] = adder_data
-                update_db(db_data)
-                
-                adder_name = my_chat_member['from'].get('first_name', 'User')
-                send_telegram_message(group_id, f"✅ ቦቱ ገብቷል። {adder_name} አሁን *{MEMBERS_TO_ADD}* ሰዎችን በመጨመር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን ማግኘት ይችላሉ።")
         
         return 'ok'
 
@@ -448,6 +420,18 @@ def webhook():
                 )
                 send_telegram_message(chat_id, start_message, reply_markup=get_start_menu())
             
+            elif command == '/unlock':
+                if message['chat']['type'] in ['group', 'supergroup']:
+                    user_data['add_task'] = {'group_id': chat_id, 'added_count': 0, 'completed': False}
+                    db_changed = True
+                    unlock_confirmation = (
+                        f"✅ ተግባሩ ለ {user_name} ተጀምሯል!\n\n"
+                        f"አሁን *{MEMBERS_TO_ADD}* ሰዎችን ወደዚህ ቡድን በመጨመር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን ያግኙ።"
+                    )
+                    send_telegram_message(chat_id, unlock_confirmation)
+                else:
+                    send_telegram_message(chat_id, "ይህ ትዕዛዝ የሚሰራው በቡድን ውስጥ ብቻ ነው።")
+
             elif command == '/support':
                 if not args:
                     send_telegram_message(chat_id, "እባክዎ ከትዕዛዙ በኋላ መልዕክትዎን ያስገቡ።\nምሳሌ: `/support ሰላም`")
@@ -494,7 +478,7 @@ def webhook():
             db_data['users'] = users_data
             update_db(db_data)
 
-    return 'ok'
+    return 'ok' 
 
 @app.route('/')
 def index():
