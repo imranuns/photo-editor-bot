@@ -177,8 +177,8 @@ def get_adjust_submenu(tool):
 @app.route('/', methods=['POST'])
 def webhook():
     update = request.get_json()
-    db_data = None # Initialize db_data to avoid multiple fetches
-    db_changed = False # Flag to track if we need to update the DB
+    db_data = None 
+    db_changed = False 
 
     # --- Callback Query Handler (Button Presses) ---
     if 'callback_query' in update:
@@ -186,10 +186,10 @@ def webhook():
         data = callback_query['data']
         chat_id = callback_query['message']['chat']['id']
         message_id = callback_query['message']['message_id']
-        user_id = callback_query['from']['id']
+        user_id = str(callback_query['from']['id'])
         
         db_data = get_db()
-        user_data = db_data.get('users', {}).get(str(user_id))
+        user_data = db_data.get('users', {}).get(user_id)
 
         if not user_data:
             send_telegram_message(chat_id, "ይቅርታ, የእርስዎን መረጃ ማግኘት አልቻልኩም። እባክዎ /start ብለው እንደገና ይጀምሩ።")
@@ -248,8 +248,31 @@ def webhook():
             send_or_edit_photo(chat_id, newly_adjusted_image, "ቅድመ-እይታ ታድሷል።", message_id=message_id, reply_markup=get_adjust_submenu(tool))
         
         if db_changed:
-            db_data['users'][str(user_id)] = user_data
+            db_data['users'][user_id] = user_data
             update_db(db_data)
+        
+        return 'ok'
+
+    # --- Handler for Bot Status Changes (e.g., being added to a group) ---
+    if 'my_chat_member' in update:
+        my_chat_member = update['my_chat_member']
+        new_status = my_chat_member.get('new_chat_member', {}).get('status')
+        
+        if new_status in ['member', 'administrator']:
+            adder_id = str(my_chat_member['from']['id'])
+            group_id = my_chat_member['chat']['id']
+            
+            db_data = get_db()
+            users_data = db_data.get('users', {})
+            adder_data = users_data.get(adder_id)
+
+            if adder_data:
+                adder_data['add_task'] = {'group_id': group_id, 'added_count': 0, 'completed': False}
+                users_data[adder_id] = adder_data
+                update_db(db_data)
+                
+                adder_name = my_chat_member['from'].get('first_name', 'User')
+                send_telegram_message(group_id, f"✅ ቦቱ ገብቷል። {adder_name} አሁን *{MEMBERS_TO_ADD}* ሰዎችን በመጨመር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን ማግኘት ይችላሉ።")
         
         return 'ok'
 
@@ -264,7 +287,6 @@ def webhook():
         db_data = get_db()
         users_data = db_data.get('users', {})
         
-        # --- New Member Handler (for /unlock task) ---
         if 'new_chat_members' in message:
             adder_id = str(message['from']['id'])
             adder_name = message['from'].get('first_name', 'User')
@@ -274,21 +296,22 @@ def webhook():
                 task = adder_data.get('add_task', {})
                 if task.get('group_id') == chat_id and not task.get('completed'):
                     new_member_count = len([m for m in message['new_chat_members'] if not m.get('is_bot')])
-                    task['added_count'] = task.get('added_count', 0) + new_member_count
-                    
-                    if task['added_count'] >= MEMBERS_TO_ADD:
-                        task['completed'] = True
-                        adder_data['credits'] = adder_data.get('credits', 0) + CREDITS_FOR_ADDING_MEMBERS
+                    if new_member_count > 0:
+                        task['added_count'] = task.get('added_count', 0) + new_member_count
                         
-                        completion_message = (
-                            f"🎉 እንኳን ደስ አለዎት {adder_name}! *{MEMBERS_TO_ADD}* ሰዎችን ስለጨመሩ *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን አግኝተዋል።\n\n"
-                            f"አሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{BOT_USERNAME}"
-                        )
-                        send_telegram_message(chat_id, completion_message)
-                        
-                    adder_data['add_task'] = task
-                    users_data[adder_id] = adder_data
-                    update_db(db_data)
+                        if task['added_count'] >= MEMBERS_TO_ADD:
+                            task['completed'] = True
+                            adder_data['credits'] = adder_data.get('credits', 0) + CREDITS_FOR_ADDING_MEMBERS
+                            
+                            completion_message = (
+                                f"🎉 እንኳን ደስ አለዎት {adder_name}! *{MEMBERS_TO_ADD}* ሰዎችን ስለጨመሩ *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን አግኝተዋል።\n\n"
+                                f"አሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{BOT_USERNAME}"
+                            )
+                            send_telegram_message(chat_id, completion_message)
+                            
+                        adder_data['add_task'] = task
+                        users_data[adder_id] = adder_data
+                        update_db(db_data)
             return 'ok'
 
         user_data = users_data.get(user_id)
@@ -310,10 +333,14 @@ def webhook():
                 except Exception as e:
                     print(f"የግብዣ ክሬዲት በመስጠት ላይ ስህተት: {e}")
 
-        # --- Photo Handler ---
         if 'photo' in message:
+            # Ensure user_data exists before proceeding
+            if not user_data:
+                send_telegram_message(chat_id, "እባክዎ መጀመሪያ ቦቱን በ /start ትዕዛዝ ያስጀምሩት።")
+                return 'ok'
+
             if user_data.get('credits', 0) < EDIT_COST:
-                send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው። በ /mylink ወይም /unlock ተጨማሪ ያግኙ።")
+                send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው። በ /mylink ተጨማሪ ያግኙ።")
                 return 'ok'
 
             user_data['credits'] -= EDIT_COST
@@ -337,15 +364,19 @@ def webhook():
                 send_telegram_message(chat_id, "❌ ይቅርታ, ፎቶዎን ማውረድ አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
             
             users_data[user_id] = user_data
-            update_db(db_data) # Update DB after photo handling
+            update_db(db_data)
             return 'ok'
 
-        # --- Command Handler ---
         if text.startswith('/'):
             command_parts = text.split()
             command = command_parts[0].lower()
             args = command_parts[1:]
             is_admin = user_id == ADMIN_ID
+            
+            # Ensure user_data exists for command handling
+            if not user_data and command != '/start':
+                 send_telegram_message(chat_id, "እባክዎ መጀመሪያ ቦቱን በ /start ትዕዛዝ ያስጀምሩት።")
+                 return 'ok'
 
             if command == '/start':
                 start_message = (
@@ -355,7 +386,6 @@ def webhook():
                     "ሌሎች ትዕዛዞች:\n"
                     "💰 `/mycredit` - ያሉዎትን ክሬዲቶች ለማየት።\n"
                     "🔗 `/mylink` - የግል መጋበዣ ሊንክ ለማግኘት።\n"
-                    "🎁 `/unlock` - በቡድን ውስጥ በመጨመር ክሬዲት ለማግኘት።\n"
                     "🆘 `/support` - ለእርዳታ አስተዳዳሪውን ለማግኘት።"
                 )
                 send_telegram_message(chat_id, start_message)
@@ -366,14 +396,6 @@ def webhook():
             elif command == '/mylink':
                 invite_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
                 send_telegram_message(chat_id, f"🔗 የእርስዎ የግል መጋበዣ ሊንክ ይኸውና:\n\n`{invite_link}`\n\nለጓደኞችዎ ያጋሩ። እነሱ ቦቱን ሲጀምሩ እርስዎ *{INVITE_CREDIT_AWARD}* ክሬዲት ያገኛሉ!")
-
-            elif command == '/unlock':
-                if message['chat']['type'] in ['group', 'supergroup']:
-                    user_data['add_task'] = {'group_id': chat_id, 'added_count': 0, 'completed': False}
-                    db_changed = True
-                    send_telegram_message(chat_id, f"✅ ተግባሩ ለ {user_name} ተጀምሯል!\n\nአሁን *{MEMBERS_TO_ADD}* ሰዎችን ወደዚህ ቡድን በመጨመር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን ያግኙ። ሰዎችን ለመቁጠር እኔ አድሚን መሆን አለብኝ።")
-                else:
-                    send_telegram_message(chat_id, "ይህ ትዕዛዝ የሚሰራው በቡድን ውስጥ ብቻ ነው።")
             
             elif command == '/support':
                 if not args:
@@ -384,14 +406,46 @@ def webhook():
                     if ADMIN_ID: send_telegram_message(ADMIN_ID, forward_message)
                     send_telegram_message(chat_id, "✅ መልዕክትዎ ለአስተዳዳሪው ተልኳል።")
 
-            # Admin commands... (No changes needed here)
+            # Admin commands...
+            elif is_admin and command == '/status':
+                # No need to fetch db_data again, it's already fetched
+                user_count = len(users_data)
+                send_telegram_message(chat_id, f"📊 *የቦት ሁኔታ*\n\nጠቅላላ ተጠቃሚዎች: *{user_count}*")
+
+            elif is_admin and command == '/broadcast':
+                if not args:
+                    send_telegram_message(chat_id, "አጠቃቀም: `/broadcast <message>`")
+                else:
+                    broadcast_text = " ".join(args)
+                    sent_count = 0
+                    for uid in users_data.keys():
+                        try:
+                            send_telegram_message(uid, broadcast_text)
+                            sent_count += 1
+                            time.sleep(0.1) 
+                        except Exception: pass
+                    send_telegram_message(chat_id, f"✅ መልዕክቱ ለ *{sent_count}* ከ *{len(users_data)}* ተጠቃሚዎች ተልኳል።")
+
+            elif is_admin and command == '/addcredit':
+                if len(args) == 2 and args[1].isdigit():
+                    target_user_id, amount = args[0], int(args[1])
+                    target_data = users_data.get(target_user_id)
+                    if target_data:
+                        target_data['credits'] = target_data.get('credits', 0) + amount
+                        users_data[target_user_id] = target_data
+                        db_changed = True
+                        send_telegram_message(chat_id, f"✅ *{amount}* ክሬዲት ለተጠቃሚ `{target_user_id}` በተሳካ ሁኔታ ተጨምሯል።")
+                        send_telegram_message(target_user_id, f"🎉 አስተዳዳሪው *{amount}* ክሬዲት ወደ አካውንትዎ ጨምሯል!")
+                    else: send_telegram_message(chat_id, "❌ ተጠቃሚው አልተገኘም።")
+                else: send_telegram_message(chat_id, "አጠቃቀም: `/addcredit <user_id> <amount>`")
+
 
         if db_changed:
-            db_data['users'][user_id] = user_data
+            db_data['users'] = users_data
             update_db(db_data)
 
     return 'ok'
 
 @app.route('/')
 def index():
-    return "Photo Editor Bot is alive and optimized!"
+    return "Photo Editor Bot is alive and fully automated!"
