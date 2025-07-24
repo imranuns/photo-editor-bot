@@ -18,7 +18,7 @@ BOT_USERNAME = os.environ.get('BOT_USERNAME')
 
 # --- Constants ---
 CREDITS_FOR_ADDING_MEMBERS = 2
-MEMBERS_TO_ADD = 10
+MEMBERS_TO_ADD = 10 # Changed back to 10 as per new instructions
 INVITE_CREDIT_AWARD = 1
 EDIT_COST = 1
 
@@ -174,9 +174,8 @@ def apply_filter(image, filter_type):
 def get_start_menu():
     """Generates the main menu for the /start command."""
     return {"inline_keyboard": [
-        [{"text": "📸 ፎቶ ማስተካከል (Edit)", "callback_data": "edit"}, {"text": "💰 ክሬዲቴን አሳይ", "callback_data": "mycredit"}],
-        [{"text": "🎁 ክሬዲት ማግኘት (Unlock)", "callback_data": "unlock"}, {"text": "🔗 መጋበዣ ሊንክ", "callback_data": "mylink"}],
-        [{"text": "🆘 እርዳታ", "callback_data": "support"}]
+        [{"text": "💰 ክሬዲቴን አሳይ", "callback_data": "mycredit"}, {"text": "🔗 መጋበዣ ሊንክ", "callback_data": "mylink"}],
+        [{"text": "🎁 ክሬዲት ማግኘት", "callback_data": "unlock"}, {"text": "🆘 እርዳታ", "callback_data": "support"}]
     ]}
 
 def get_main_menu():
@@ -235,18 +234,6 @@ def webhook():
             return 'ok'
             
         # --- Main Menu Button Handlers ---
-        if data == 'edit':
-            answer_callback_query(callback_query['id'])
-            edit_message_reply_markup(chat_id, message_id)
-            if user_data.get('credits', 0) < EDIT_COST:
-                send_telegram_message(chat_id, f"❌ በቂ ክሬዲት የለዎትም። ያለዎት *{user_data.get('credits', 0)}* ነው።")
-            else:
-                user_data['session'] = {'status': 'waiting_for_photo'}
-                db_data['users'][user_id] = user_data
-                update_db(db_data)
-                send_telegram_message(chat_id, "እባክዎ አሁን ማስተካከል የሚፈልጉትን ፎቶ ይላኩ።")
-            return 'ok'
-
         if data == 'mycredit':
             answer_callback_query(callback_query['id'])
             edit_message_reply_markup(chat_id, message_id)
@@ -263,7 +250,11 @@ def webhook():
         elif data == 'unlock':
             answer_callback_query(callback_query['id'])
             edit_message_reply_markup(chat_id, message_id)
-            unlock_message = f"እዚ @havivss ግሩፑ ላይ `/unlock` ይበሉና *{MEMBERS_TO_ADD}* ሰዎችን ወደ ግሩፑ ሲያስገቡ ቦቱ በራስ-ሰር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲት ይሰጦታል።"
+            unlock_message = (
+                "🎁 *እንዴት ነጻ ክሬዲት ማግኘት ይቻላል?*\n\n"
+                f"1. ይህንን ቦት ወደ @havivss ግሩፕ 'Add Member' በማድረግ ያስገቡት።\n"
+                f"2. *{MEMBERS_TO_ADD}* ሰዎችን ወደ ግሩፑ ሲያስገቡ (add ሲያደርጉ) ቦቱ በራስ-ሰር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲት ይሰጦታል።"
+            )
             send_telegram_message(chat_id, unlock_message)
             return 'ok'
 
@@ -334,6 +325,29 @@ def webhook():
         
         return 'ok'
 
+    # --- Handler for Bot Status Changes (e.g., being added to a group) ---
+    if 'my_chat_member' in update:
+        my_chat_member = update['my_chat_member']
+        new_status = my_chat_member.get('new_chat_member', {}).get('status')
+        
+        # When the bot is added to a group as a member or administrator
+        if new_status in ['member', 'administrator']:
+            adder_id = str(my_chat_member['from']['id'])
+            group_id = my_chat_member['chat']['id']
+            
+            db_data = get_db()
+            users_data = db_data.get('users', {})
+            adder_data = users_data.get(adder_id)
+
+            # Create a task for the user who added the bot
+            if adder_data:
+                adder_data['add_task'] = {'group_id': group_id, 'added_count': 0, 'completed': False}
+                users_data[adder_id] = adder_data
+                update_db(db_data)
+                # This process is now silent, no confirmation message to the group.
+        
+        return 'ok'
+
     # --- Message Handler (Commands, Photos, New Members) ---
     if 'message' in update:
         message = update['message']
@@ -365,10 +379,7 @@ def webhook():
                                 f"🎉 እንኳን ደስ አለዎት {adder_name}! *{MEMBERS_TO_ADD}* ሰዎችን ስለጨመሩ *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን አግኝተዋል።\n\n"
                                 f"አሁን ፎቶዎችን ማስተካከል ይችላሉ። እዚህ ጋር ይንኩ 👉 @{BOT_USERNAME}"
                             )
-                            
-                            print(f"DEBUG: Preparing to send completion message to group {chat_id}.")
                             send_telegram_message(chat_id, completion_message)
-                            print(f"DEBUG: Completion message function called for group {chat_id}.")
                             
                         adder_data['add_task'] = task
                         users_data[adder_id] = adder_data
@@ -399,29 +410,39 @@ def webhook():
                 send_telegram_message(chat_id, "እባክዎ መጀመሪያ ቦቱን በ /start ትዕዛዝ ያስጀምሩት።")
                 return 'ok'
             
-            session = user_data.get('session', {})
-            if session.get('status') == 'waiting_for_photo':
-                user_data['credits'] -= EDIT_COST
-                db_changed = True
-                file_id = message['photo'][-1]['file_id']
-                
-                send_telegram_message(chat_id, "⏳ ፎቶዎን በማዘጋጀት ላይ ነው...")
+            # Simplified workflow: Check credit immediately upon receiving a photo
+            if user_data.get('credits', 0) < EDIT_COST:
+                no_credit_message = (
+                    "🚫 *ይቅርታ! በቂ ነጥብ የሎትም!*\n"
+                    "📸 ምስል ለመስራት፣ ከዚህ አንዱን ይከተሉ፦\n\n"
+                    f"👤 @havivss group ውስጥ *{MEMBERS_TO_ADD}* ሰው add ያድርጉ ✅\n"
+                    "ወይም\n"
+                    "🔗 በ invite link *1* ሰው ላኩ 🎯\n\n"
+                    "🚀 ከዚያ photo ይላኩ። 🤖✨"
+                )
+                send_telegram_message(chat_id, no_credit_message)
+                return 'ok'
 
-                image = get_image_from_telegram(file_id)
-                if image:
-                    caption = "የማስተካከያ አይነት ይምረጡ።"
-                    message_id = send_or_edit_photo(chat_id, image, caption, reply_markup=get_main_menu())
+            # If user has credit, proceed
+            user_data['credits'] -= EDIT_COST
+            db_changed = True
+            file_id = message['photo'][-1]['file_id']
+            
+            send_telegram_message(chat_id, "⏳ ፎቶዎን በማዘጋጀት ላይ ነው...")
 
-                    if message_id:
-                        user_data['session'] = {'file_id': file_id, 'message_id': message_id, 'adjustments': []}
-                    else:
-                        user_data['credits'] += EDIT_COST
-                        send_telegram_message(chat_id, "❌ ስህተት ተፈጥሯል። የኤዲቲንግ ክፍለ ጊዜ መጀመር አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
+            image = get_image_from_telegram(file_id)
+            if image:
+                caption = "የማስተካከያ አይነት ይምረጡ።"
+                message_id = send_or_edit_photo(chat_id, image, caption, reply_markup=get_main_menu())
+
+                if message_id:
+                    user_data['session'] = {'file_id': file_id, 'message_id': message_id, 'adjustments': []}
                 else:
-                    user_data['credits'] += EDIT_COST
-                    send_telegram_message(chat_id, "❌ ይቅርታ, ፎቶዎን ማውረድ አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
+                    user_data['credits'] += EDIT_COST # Refund credit
+                    send_telegram_message(chat_id, "❌ ስህተት ተፈጥሯል። ክሬዲትዎ አልተቀነሰም።")
             else:
-                send_telegram_message(chat_id, "ፎቶ ለማስተካከል መጀመሪያ '📸 ፎቶ ማስተካከል (Edit)' የሚለውን አዝራር ይጫኑ።")
+                user_data['credits'] += EDIT_COST # Refund credit
+                send_telegram_message(chat_id, "❌ ይቅርታ, ፎቶዎን ማውረድ አልተቻለም። ክሬዲትዎ አልተቀነሰም።")
             
             users_data[user_id] = user_data
             update_db(db_data)
@@ -441,22 +462,10 @@ def webhook():
                 start_message = (
                     f"👋 ሰላም {user_name}!\n\n"
                     "ወደ ፎቶ ማስተካከያ ቦት እንኳን በደህና መጡ።\n\n"
-                    "ከታች ያሉትን አማራጮች ይጠቀሙ።"
+                    "ፎቶ በመላክ ይጀምሩ ወይም ከታች ያሉትን አማራጮች ይጠቀሙ።"
                 )
                 send_telegram_message(chat_id, start_message, reply_markup=get_start_menu())
             
-            elif command == '/unlock':
-                if message['chat']['type'] in ['group', 'supergroup']:
-                    user_data['add_task'] = {'group_id': chat_id, 'added_count': 0, 'completed': False}
-                    db_changed = True
-                    unlock_confirmation = (
-                        f"✅ ተግባሩ ለ {user_name} ተጀምሯል!\n\n"
-                        f"አሁን *{MEMBERS_TO_ADD}* ሰዎችን ወደዚህ ቡድን በመጨመር *{CREDITS_FOR_ADDING_MEMBERS}* ክሬዲቶችን ያግኙ።"
-                    )
-                    send_telegram_message(chat_id, unlock_confirmation)
-                else:
-                    send_telegram_message(chat_id, "ይህ ትዕዛዝ የሚሰራው በቡድን ውስጥ ብቻ ነው።")
-
             elif command == '/support':
                 if not args:
                     send_telegram_message(chat_id, "እባክዎ ከትዕዛዙ በኋላ መልዕክትዎን ያስገቡ።\nምሳሌ: `/support ሰላም`")
@@ -505,6 +514,7 @@ def webhook():
 
     return 'ok' 
 
+# This is the root route that can be used for health checks.
 @app.route('/')
 def index():
     """Handles simple GET requests to the root, confirming the bot is alive."""
