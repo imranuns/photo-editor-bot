@@ -15,7 +15,7 @@ ADMIN_ID = os.environ.get('ADMIN_ID')
 JSONBIN_API_KEY = os.environ.get('JSONBIN_API_KEY')
 JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
 BOT_USERNAME = os.environ.get('BOT_USERNAME')
-CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME') # e.g., @havivss
+CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME') # e.g., @elightledger
 
 # --- Constants ---
 CREDITS_FOR_ADDING_MEMBERS = 2
