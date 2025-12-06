@@ -15,13 +15,13 @@ ADMIN_ID = os.environ.get('ADMIN_ID')
 JSONBIN_API_KEY = os.environ.get('JSONBIN_API_KEY')
 JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID')
 BOT_USERNAME = os.environ.get('BOT_USERNAME')
-# CHANNEL_USERNAME is now optional/fallback, system uses Database primarily
+# CHANNEL_USERNAME is now optional/fallback
 DEFAULT_CHANNEL = os.environ.get('CHANNEL_USERNAME') 
 
 # --- Constants ---
-INVITE_CREDIT_AWARD = 5
+INVITE_CREDIT_AWARD = 5 # ጋባዡ የሚያገኘው
 EDIT_COST = 1
-DAILY_BONUS_AMOUNT = 5
+DAILY_BONUS_AMOUNT = 5 # ሁሉም ተጠቃሚ በቀን የሚያገኘው
 
 # --- Database Functions ---
 def get_db():
@@ -30,10 +30,8 @@ def get_db():
     try:
         req = requests.get(f'https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest', headers=headers)
         data = req.json() if req.status_code == 200 else {'users': {}, 'settings': {'channels': []}}
-        # Ensure structure exists
         if 'settings' not in data: data['settings'] = {'channels': []}
         if 'channels' not in data['settings']: data['settings']['channels'] = []
-        # Migration: Add default env channel if DB list is empty and env exists
         if not data['settings']['channels'] and DEFAULT_CHANNEL:
             data['settings']['channels'].append(DEFAULT_CHANNEL)
         return data
@@ -53,11 +51,21 @@ def send_telegram_message(chat_id, text, reply_markup=None):
     try: requests.post(url, json=payload)
     except Exception as e: print(f"Error sending msg: {e}")
 
-def copy_message(chat_id, from_chat_id, message_id):
+def copy_message(chat_id, from_chat_id, message_id, reply_markup=None):
+    """Copies any message exactly as is, including buttons."""
     url = f"https://api.telegram.org/bot{TOKEN}/copyMessage"
-    payload = {'chat_id': chat_id, 'from_chat_id': from_chat_id, 'message_id': message_id}
-    try: requests.post(url, json=payload)
-    except: pass
+    payload = {
+        'chat_id': chat_id, 
+        'from_chat_id': from_chat_id, 
+        'message_id': message_id
+    }
+    if reply_markup:
+        payload['reply_markup'] = json.dumps(reply_markup)
+        
+    try: 
+        res = requests.post(url, json=payload)
+        return res.json().get('ok')
+    except: return False
 
 def forward_message(chat_id, from_chat_id, message_id):
     url = f"https://api.telegram.org/bot{TOKEN}/forwardMessage"
@@ -107,7 +115,6 @@ def send_or_edit_photo(chat_id, image, caption, message_id=None, reply_markup=No
 
 # --- Force Join Logic ---
 def get_missing_channels(user_id, channels_list):
-    """Checks subscription status for a list of channels."""
     missing = []
     for channel in channels_list:
         url = f"https://api.telegram.org/bot{TOKEN}/getChatMember?chat_id={channel}&user_id={user_id}"
@@ -117,25 +124,18 @@ def get_missing_channels(user_id, channels_list):
                 status = res['result']['status']
                 if status not in ['creator', 'administrator', 'member']:
                     missing.append(channel)
-            else:
-                # If bot can't check (e.g. not admin), we might skip or force. 
-                # Ideally, admin ensures bot is admin. Assuming force:
-                pass 
         except: pass
     return missing
 
 def get_join_channels_markup(missing_channels):
-    """Generates buttons for all missing channels."""
     buttons = []
     for channel in missing_channels:
-        # Removing @ for URL
         clean_name = channel.replace('@', '')
         buttons.append([{"text": f"📢 Join {channel}", "url": f"https://t.me/{clean_name}"}])
-    
     buttons.append([{"text": "✅ ተቀላቅያለሁ (Check)", "callback_data": "check_subscription"}])
     return {"inline_keyboard": buttons}
 
-# --- Image Processing (Standard) ---
+# --- Image Processing Functions ---
 def get_image_from_telegram(file_id):
     try:
         res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()
@@ -261,12 +261,11 @@ def webhook():
         if str(user_id) == ADMIN_ID:
             if data == 'admin_add_channel':
                 answer_callback_query(cq['id'])
-                # Set admin state
-                if not user_data: user_data = {'credits': 999, 'session': {}} # fallback logic
+                if not user_data: user_data = {'credits': 999, 'session': {}}
                 user_data.setdefault('session', {})['status'] = 'waiting_for_channel_add'
                 db_data['users'][user_id] = user_data
                 update_db(db_data)
-                send_telegram_message(chat_id, "➕ የቻናሉን Username (ለምሳሌ @havivss) ይላኩ።\n⚠️ ማሳሰቢያ፡ ቦቱ መጀመሪያ የቻናሉ Admin መሆኑን ያረጋግጡ።")
+                send_telegram_message(chat_id, "➕ የቻናሉን Username (ለምሳሌ @havivss) ይላኩ።")
                 return 'ok'
             
             elif data == 'admin_list_remove':
@@ -288,7 +287,6 @@ def webhook():
                     db_data['settings']['channels'] = current_channels
                     update_db(db_data)
                     answer_callback_query(cq['id'], text=f"{channel_to_remove} ተወግዷል።")
-                    # Refresh list
                     keyboard = [[{"text": f"🗑 Remove {ch}", "callback_data": f"admin_del_{ch}"}] for ch in current_channels]
                     keyboard.append([{"text": "🔙 Back", "callback_data": "admin_home"}])
                     edit_message_reply_markup(chat_id, message_id, {"inline_keyboard": keyboard})
@@ -332,12 +330,12 @@ def webhook():
             user_data['session']['status'] = 'waiting_for_support'
             db_data['users'][user_id] = user_data
             update_db(db_data)
-            send_telegram_message(chat_id, "📩 *የእርዳታ ማዕከል*\n\nመልዕክቶን ይጻፉ እና ይላኩ።")
+            send_telegram_message(chat_id, "📩 *የእርዳታ ማዕከል*\n\nአስተያየት ወይም ጥያቄ ካለዎት፣ አሁን መልዕክቶን ይጻፉ እና ይላኩ። በቀጥታ ለአድሚኑ ይደርሳል።")
             return 'ok'
 
-        # Photo Processing Logic (Standard)
+        # Photo Editing Logic
         session = user_data.get('session', {})
-        if not session.get('file_id'): return 'ok' # Simple fail silently if old button
+        if not session.get('file_id'): return 'ok'
         original_image = get_image_from_telegram(session['file_id'])
         if not original_image: return 'ok'
         answer_callback_query(cq['id'])
@@ -389,14 +387,12 @@ def webhook():
         user_id = str(msg['from']['id'])
         text = msg.get('text', '')
         
-        # Load Data
         db_data = get_db()
         users_data = db_data.get('users', {})
         user_data = users_data.get(user_id)
         current_channels = db_data.get('settings', {}).get('channels', [])
 
-        # 1. Force Join Check (Strict)
-        # Skip check only if user sends /start (to allow init) or if admin
+        # 1. Force Join Check
         is_admin = str(user_id) == ADMIN_ID
         if current_channels and not is_admin:
             missing = get_missing_channels(user_id, current_channels)
@@ -407,11 +403,13 @@ def webhook():
         # 2. User Init & Daily Bonus
         if not user_data:
             invited_by = text.split()[1] if text.startswith('/start ') and len(text.split()) > 1 else None
-            user_data = {'credits': 5, 'invited_by': invited_by, 'session': {}, 'last_bonus_date': ''}
+            # Initialize with 0 credits.
+            user_data = {'credits': 0, 'invited_by': invited_by, 'session': {}, 'last_bonus_date': ''}
             users_data[user_id] = user_data
             db_changed = True
+            # Award credit ONLY to the inviter
             if invited_by and users_data.get(invited_by):
-                users_data[invited_by]['credits'] += INVITE_CREDIT_AWARD
+                users_data[invited_by]['credits'] = users_data[invited_by].get('credits', 0) + INVITE_CREDIT_AWARD
                 send_telegram_message(invited_by, f"🎉 ሰው ስለጋበዙ {INVITE_CREDIT_AWARD} ክሬዲት አግኝተዋል!")
 
         user_data, bonus_given = process_daily_bonus(user_data)
@@ -420,13 +418,33 @@ def webhook():
             send_telegram_message(chat_id, f"🎁 *የዕለታዊ ቦነስ!* ዛሬ {DAILY_BONUS_AMOUNT} ነጻ ክሬዲት አግኝተዋል! አሁን ፎቶ ማስተካከል ይችላሉ።")
             db_changed = True
 
-        # 3. Admin Logic (Message Based)
+        # 3. Admin Logic
         if is_admin:
-            # Handle Add Channel Input
+            # Broadcast State Handling
+            if user_data.get('session', {}).get('status') == 'waiting_for_broadcast':
+                broadcast_msg_id = msg['message_id']
+                reply_markup = msg.get('reply_markup')
+                
+                count = 0
+                send_telegram_message(chat_id, "⏳ ብሮድካስት እየተላከ ነው... (ይህ ትንሽ ጊዜ ሊወስድ ይችላል)")
+                
+                for uid in users_data.keys():
+                    try:
+                        success = copy_message(uid, chat_id, broadcast_msg_id, reply_markup)
+                        if success: count += 1
+                        time.sleep(0.05) 
+                    except: pass
+                
+                send_telegram_message(chat_id, f"✅ ብሮድካስት ለ {count} ተጠቃሚዎች ተዳርሷል!")
+                user_data['session']['status'] = '' 
+                users_data[user_id] = user_data
+                update_db(db_data)
+                return 'ok'
+
+            # Add Channel State Handling
             if user_data.get('session', {}).get('status') == 'waiting_for_channel_add':
                 new_channel = text.strip()
                 if new_channel.startswith('@'):
-                    # Verify bot is admin there (simple check)
                     try:
                         res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getChatMember?chat_id={new_channel}&user_id={user_id}").json()
                         if res.get('ok'):
@@ -440,8 +458,7 @@ def webhook():
                     except: send_telegram_message(chat_id, "❌ ስህተት ተፈጠረ።")
                 else:
                     send_telegram_message(chat_id, "❌ ትክክለኛ Username አይደለም። በ @ ይጀምሩ።")
-                
-                user_data['session']['status'] = '' # Reset state
+                user_data['session']['status'] = ''
                 users_data[user_id] = user_data
                 update_db(db_data)
                 return 'ok'
@@ -451,16 +468,10 @@ def webhook():
                 return 'ok'
 
             if text == '/broadcast':
-                if 'reply_to_message' in msg:
-                    b_msg_id = msg['reply_to_message']['message_id']
-                    count = 0
-                    send_telegram_message(chat_id, "⏳ ብሮድካስት እየተላከ ነው...")
-                    for uid in users_data.keys():
-                        copy_message(uid, chat_id, b_msg_id)
-                        count += 1
-                        time.sleep(0.05)
-                    send_telegram_message(chat_id, f"✅ ለ {count} ተጠቃሚዎች ተላከ!")
-                else: send_telegram_message(chat_id, "⚠️ መላክ ለሚፈልጉት መልዕክት Reply በማድረግ ትዕዛዙን ይላኩ።")
+                user_data['session']['status'] = 'waiting_for_broadcast'
+                users_data[user_id] = user_data
+                update_db(db_data)
+                send_telegram_message(chat_id, "📢 *ብሮድካስት*\n\nመላክ የሚፈልጉትን ማስታወቂያ (ጽሁፍ፣ ፎቶ፣ ቪዲዮ፣ ወዘተ) አሁን ይላኩ። ቦቱ እንዳለ ገልብጦ ለሁሉም ይልከዋል።")
                 return 'ok'
             
             if text.startswith('/addcredit'):
@@ -474,12 +485,14 @@ def webhook():
                         send_telegram_message(tid, f"🎉 Admin added {amt} credits!")
                 return 'ok'
 
-        # 4. Support Logic
+        # 4. Support Logic (Forwarding to Admin)
         if user_data.get('session', {}).get('status') == 'waiting_for_support':
             if ADMIN_ID:
                 forward_message(ADMIN_ID, chat_id, msg['message_id'])
-                send_telegram_message(ADMIN_ID, f"ℹ️ From: {msg['from'].get('first_name')} (ID: `{user_id}`)")
-            send_telegram_message(chat_id, "✅ መልዕክትዎ ተልኳል!")
+                context_msg = f"ℹ️ *New Support Message*\nFrom: {msg['from'].get('first_name')} (ID: `{user_id}`)"
+                send_telegram_message(ADMIN_ID, context_msg)
+            
+            send_telegram_message(chat_id, "✅ መልዕክትዎ ለአድሚኑ ተልኳል! በቅርቡ ምላሽ ያገኛሉ።")
             user_data['session']['status'] = ''
             users_data[user_id] = user_data
             db_changed = True
