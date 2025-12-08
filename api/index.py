@@ -53,8 +53,14 @@ def send_telegram_message(chat_id, text, reply_markup=None):
 
 def copy_message(chat_id, from_chat_id, message_id, reply_markup=None):
     url = f"https://api.telegram.org/bot{TOKEN}/copyMessage"
-    payload = {'chat_id': chat_id, 'from_chat_id': from_chat_id, 'message_id': message_id}
-    if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
+    payload = {
+        'chat_id': chat_id, 
+        'from_chat_id': from_chat_id, 
+        'message_id': message_id
+    }
+    if reply_markup:
+        payload['reply_markup'] = json.dumps(reply_markup)
+        
     try: 
         res = requests.post(url, json=payload)
         return res.json().get('ok')
@@ -257,7 +263,7 @@ def webhook():
                         success_msg = f"🎉 እንኳን ደስ አለዎት! በርሶ link 1 ሰው ስላቀላቀሉ {INVITE_CREDIT_AWARD} credit አጊኝተዋል። አሁን photo ይኩና edite ያድርጉ👍።"
                         send_telegram_message(invited_by_id, success_msg)
                         
-                        # Mark as rewarded so we don't pay double
+                        # Mark as rewarded
                         user_data['referral_rewarded'] = True
                         users_data[user_id] = user_data
                         update_db(db_data)
@@ -400,8 +406,13 @@ def webhook():
 
         # --- 1. User Initialization (NO CREDIT AWARDED HERE) ---
         if not user_data:
-            invited_by = text.split()[1] if text.startswith('/start ') and len(text.split()) > 1 else None
-            # Store inviter, but status is 'pending' (referral_rewarded = False default)
+            # THIS IS THE CRITICAL FIX: startswith instead of ==
+            invited_by = None
+            if text.startswith('/start'):
+                parts = text.split()
+                if len(parts) > 1:
+                    invited_by = parts[1]
+            
             user_data = {
                 'credits': 0, 
                 'invited_by': invited_by, 
@@ -420,7 +431,6 @@ def webhook():
         if current_channels and not is_admin:
             missing = get_missing_channels(user_id, current_channels)
             if missing:
-                # Save data first so we don't lose the invite info
                 update_db({'users': users_data, 'settings': db_data.get('settings', {})})
                 send_telegram_message(chat_id, "⚠️ ቦቱን ለመጠቀም መጀመሪያ የሚከተሉትን ቻናሎች መቀላቀል አለብዎት።", reply_markup=get_join_channels_markup(missing))
                 return 'ok'
@@ -501,7 +511,7 @@ def webhook():
             users_data[user_id] = user_data
             db_changed = True
 
-        if text == '/start':
+        if text.startswith('/start'):
             send_telegram_message(chat_id, f"👋 ሰላም {msg['from'].get('first_name')}!\n\nወደ ፎቶ ማስተካከያ ቦት እንኳን በደህና መጡ።\n\nፎቶ በመላክ ይጀምሩ ወይም ከታች ያሉትን አማራጮች ይጠቀሙ።", reply_markup=get_start_menu())
         
         if 'photo' in msg:
